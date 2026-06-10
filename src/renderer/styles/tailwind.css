@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply font-display antialiased;
+  }
+}
+
+@layer components {
+  .btn-score {
+    @apply relative overflow-hidden rounded-xl font-score text-white font-bold
+           transition-all duration-150 active:scale-95 select-none
+           shadow-lg hover:shadow-xl cursor-pointer;
+  }
+
+  .btn-score-blue {
+    @apply bg-gradient-to-br from-kumite-blue-500 to-kumite-blue-700
+           hover:from-kumite-blue-400 hover:to-kumite-blue-600;
+  }
+
+  .btn-score-red {
+    @apply bg-gradient-to-br from-kumite-red-500 to-kumite-red-700
+           hover:from-kumite-red-400 hover:to-kumite-red-600;
+  }
+
+  .btn-penalty {
+    @apply rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-wider
+           transition-all duration-150 active:scale-95 cursor-pointer
+           border-2 select-none;
+  }
+
+  .btn-penalty-blue {
+    @apply border-kumite-blue-500 text-kumite-blue-700 bg-kumite-blue-50
+           hover:bg-kumite-blue-100;
+  }
+
+  .btn-penalty-red {
+    @apply border-kumite-red-500 text-kumite-red-700 bg-kumite-red-50
+           hover:bg-kumite-red-100;
+  }
+
+  .btn-penalty-active-blue {
+    @apply bg-kumite-blue-500 text-white border-kumite-blue-600;
+  }
+
+  .btn-penalty-active-red {
+    @apply bg-kumite-red-500 text-white border-kumite-red-600;
+  }
+
+  .card {
+    @apply bg-white rounded-2xl shadow-md border border-gray-100;
+  }
+
+  .nav-tab {
+    @apply px-5 py-3 rounded-xl font-semibold text-sm transition-all duration-200 cursor-pointer select-none;
+  }
+
+  .nav-tab-active {
+    @apply bg-gray-900 text-white shadow-lg;
+  }
+
+  .nav-tab-inactive {
+    @apply bg-white text-gray-500 hover:text-gray-800 hover:bg-gray-50;
+  }
+}
