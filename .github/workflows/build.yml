@@ -27,7 +27,7 @@ jobs:
         run: npm run build
 
       - name: Build DMG (arm64)
-        run: npx electron-builder --mac --arm64
+        run: npx electron-builder --mac --arm64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
@@ -56,7 +56,7 @@ jobs:
         run: npm run build
 
       - name: Build DMG (x64)
-        run: npx electron-builder --mac --x64
+        run: npx electron-builder --mac --x64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
@@ -85,7 +85,7 @@ jobs:
         run: npm run build
 
       - name: Build EXE
-        run: npx electron-builder --win --x64
+        run: npx electron-builder --win --x64 --publish never
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
