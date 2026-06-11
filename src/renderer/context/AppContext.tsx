@@ -113,12 +113,23 @@ function broadcast_to_spectator(data: SpectatorData) {
   } catch {}
 }
 
+function load_stored<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch { return fallback; }
+}
+
+function save_stored(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [page, set_page] = useState<Page>('home');
-  const [tournaments, set_tournaments] = useState<Tournament[]>([]);
-  const [competitors, set_competitors] = useState<Competitor[]>([]);
-  const [tournament_competitors, set_tc] = useState<Record<string, string[]>>({});
-  const [matches, set_matches] = useState<Match[]>([]);
+  const [tournaments, set_tournaments] = useState<Tournament[]>(() => load_stored('kumite_tournaments', []));
+  const [competitors, set_competitors] = useState<Competitor[]>(() => load_stored('kumite_competitors', []));
+  const [tournament_competitors, set_tc] = useState<Record<string, string[]>>(() => load_stored('kumite_tc', {}));
+  const [matches, set_matches] = useState<Match[]>(() => load_stored('kumite_matches', []));
   const [selected_tournament_id, set_selected_tournament_id] = useState<string | null>(null);
   const [selected_category_id, set_selected_category_id] = useState<string | null>(null);
 
@@ -131,6 +142,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [red_penalties, set_red_penalties] = useState<PenaltyLevel[]>([]);
   const [score_flash, set_score_flash] = useState<Side | null>(null);
   const timer_ref = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Persist to localStorage on change
+  useEffect(() => { save_stored('kumite_tournaments', tournaments); }, [tournaments]);
+  useEffect(() => { save_stored('kumite_competitors', competitors); }, [competitors]);
+  useEffect(() => { save_stored('kumite_tc', tournament_competitors); }, [tournament_competitors]);
+  useEffect(() => { save_stored('kumite_matches', matches); }, [matches]);
 
   const get_competitor = useCallback((id: string) => competitors.find(c => c.id === id), [competitors]);
   const get_tournament = useCallback((id: string) => tournaments.find(t => t.id === id), [tournaments]);

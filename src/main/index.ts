@@ -6,6 +6,7 @@ app.whenReady().then(() => {
   create_operator_window();
 
   // Forward score/timer/penalty channels to spectator window
+  // Dima test push code
   const forward_channels = [
     IPC_CHANNELS.SCORE_UPDATED,
     IPC_CHANNELS.PENALTY_UPDATED,
