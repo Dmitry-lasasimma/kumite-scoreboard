@@ -79,6 +79,9 @@ function MatchCard({ match, get_competitor, on_start_match }: {
             {get_club(match.blue_competitor_id, get_competitor)}
           </div>
         </div>
+        {is_done && typeof match.blue_score === 'number' && (
+          <span className="text-sm font-score font-bold text-kumite-blue-700 tabular-nums">{match.blue_score}</span>
+        )}
         {match.winner_id === match.blue_competitor_id && (
           <span className="text-xs font-bold text-kumite-blue-600 bg-kumite-blue-100 px-2 py-0.5 rounded">WIN</span>
         )}
@@ -97,6 +100,9 @@ function MatchCard({ match, get_competitor, on_start_match }: {
             {get_club(match.red_competitor_id, get_competitor)}
           </div>
         </div>
+        {is_done && typeof match.red_score === 'number' && (
+          <span className="text-sm font-score font-bold text-kumite-red-700 tabular-nums">{match.red_score}</span>
+        )}
         {match.winner_id === match.red_competitor_id && (
           <span className="text-xs font-bold text-kumite-red-600 bg-kumite-red-100 px-2 py-0.5 rounded">WIN</span>
         )}

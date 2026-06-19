@@ -54,6 +54,7 @@ module.exports = {
     new CopyWebpackPlugin({
       patterns: [
         { from: 'public/fonts', to: 'fonts' },
+        { from: 'public/sounds', to: 'sounds' },
       ],
     }),
     ...(is_dev ? [] : [new MiniCssExtractPlugin({ filename: '[name].css' })]),

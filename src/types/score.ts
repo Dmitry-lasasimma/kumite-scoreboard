@@ -1,4 +1,4 @@
-export type PenaltyLevel = '1C' | '2C' | '3C' | '4HC' | '5H';
+export type PenaltyLevel = '1C' | '2C' | '3C' | '4HC' | '5H' | '6S';
 
 export interface MatchScore {
   id: string;

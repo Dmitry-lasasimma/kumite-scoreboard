@@ -173,12 +173,12 @@ export default function CompetitorRegistration() {
               </div>
             )}
 
-            {/* Category selector */}
-            {available_categories.length > 0 && (
+            {/* Category selector — show every category so it can be assigned/updated any time */}
+            {(editing_id ? all_categories : available_categories).length > 0 && (
               <div>
                 <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Category</label>
                 <div className="flex gap-2 flex-wrap">
-                  {available_categories.map(cat => (
+                  {(editing_id ? all_categories : available_categories).map(cat => (
                     <button
                       key={cat.id}
                       onClick={() => set_category_id(category_id === cat.id ? '' : cat.id)}

@@ -9,7 +9,7 @@ export default function MatchScoring() {
   const {
     score, is_running, match_status, winner,
     blue_penalties, red_penalties, score_flash,
-    handle_score, handle_remove_score,
+    handle_score, handle_remove_score, handle_toggle_senshu,
     handle_add_penalty, handle_remove_penalty,
     handle_hajime, handle_stop, handle_resume, handle_reset,
     handle_time_change,
@@ -79,11 +79,15 @@ export default function MatchScoring() {
               <div className="text-xl font-score font-bold text-kumite-blue-700">{blue_name}</div>
               {blue_club && <div className="text-xs text-gray-400">{blue_club}</div>}
             </div>
-            {score.blue_zenshu && (
-              <span className="px-3 py-1 bg-kumite-blue-100 text-kumite-blue-700 rounded-full text-xs font-bold uppercase tracking-wider border border-kumite-blue-300">
-                Senshu
-              </span>
-            )}
+            <button
+              onClick={() => handle_toggle_senshu('blue')}
+              title={score.blue_zenshu ? 'Remove Senshu' : 'Give Senshu'}
+              className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border transition-all
+                ${score.blue_zenshu
+                  ? 'bg-kumite-blue-600 text-white border-kumite-blue-600 shadow-md'
+                  : 'bg-white text-kumite-blue-600 border-kumite-blue-300 hover:bg-kumite-blue-50'}`}>
+              Senshu
+            </button>
           </div>
 
           <div className="text-center">
@@ -125,11 +129,15 @@ export default function MatchScoring() {
           score_flash === 'red' ? 'animate-flash' : ''
         }`}>
           <div className="flex items-center justify-between">
-            {score.red_zenshu && (
-              <span className="px-3 py-1 bg-kumite-red-100 text-kumite-red-700 rounded-full text-xs font-bold uppercase tracking-wider border border-kumite-red-300">
-                Senshu
-              </span>
-            )}
+            <button
+              onClick={() => handle_toggle_senshu('red')}
+              title={score.red_zenshu ? 'Remove Senshu' : 'Give Senshu'}
+              className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border transition-all
+                ${score.red_zenshu
+                  ? 'bg-kumite-red-600 text-white border-kumite-red-600 shadow-md'
+                  : 'bg-white text-kumite-red-600 border-kumite-red-300 hover:bg-kumite-red-50'}`}>
+              Senshu
+            </button>
             <div className="text-right ml-auto">
               <div className="text-xl font-score font-bold text-kumite-red-700">{red_name}</div>
               {red_club && <div className="text-xs text-gray-400">{red_club}</div>}

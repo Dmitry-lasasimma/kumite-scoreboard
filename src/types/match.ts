@@ -10,5 +10,7 @@ export interface Match {
   match_number: number;
   status: MatchStatus;
   winner_id: string | null;
+  blue_score?: number;   // Final total for the blue (AO) competitor
+  red_score?: number;    // Final total for the red (AKA) competitor
   created_at?: string;
 }

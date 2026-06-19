@@ -3,8 +3,9 @@ import { Competitor } from '../../types/competitor';
 import { Tournament } from '../../types/tournament';
 import { Match } from '../../types/match';
 import { MatchScore, PenaltyLevel, Side, ScoreType } from '../../types/score';
-import { add_score, remove_score, calculate_total, check_auto_win, determine_winner, apply_penalty_zenshu } from '../../services/scorer_service';
-import { DEFAULT_DURATION } from '../../utils/constants';
+import { add_score, remove_score, calculate_total, check_auto_win, determine_winner, apply_penalty_zenshu, toggle_senshu, award_disqualification } from '../../services/scorer_service';
+import { DEFAULT_DURATION, DISQUALIFYING_PENALTIES } from '../../utils/constants';
+import { play_short_beep, play_long_beep } from '../../utils/sounds';
 import { generate_bracket, advance_winner } from '../../services/bracket_generator';
 import { v4 as uuid } from 'uuid';
 
@@ -24,6 +25,7 @@ function create_empty_score(): MatchScore {
 
 interface SpectatorData {
   score: MatchScore;
+  category: string;
   blue_name: string;
   red_name: string;
   blue_club: string;
@@ -77,6 +79,7 @@ interface AppState {
 
   handle_score: (side: Side, type: ScoreType) => void;
   handle_remove_score: (side: Side, type: ScoreType) => void;
+  handle_toggle_senshu: (side: Side) => void;
   handle_add_penalty: (side: Side, level: PenaltyLevel) => void;
   handle_remove_penalty: (side: Side) => void;
   handle_hajime: () => void;
@@ -84,7 +87,7 @@ interface AppState {
   handle_resume: () => void;
   handle_reset: () => void;
   handle_time_change: (seconds: number) => void;
-  handle_finish_match: (winner_side: Side) => void;
+  handle_finish_match: (winner_side: Side, blue_score: number, red_score: number) => void;
 
   get_competitor: (id: string) => Competitor | undefined;
   get_tournament: (id: string) => Tournament | undefined;
@@ -178,9 +181,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return c ? c.club : '';
   }, [current_match, get_competitor]);
 
+  const get_category_label = useCallback(() => {
+    if (!current_match || current_match.tournament_id === null) return '';
+    const t = tournaments.find(x => x.id === current_match.tournament_id);
+    if (current_match.category_id && t) {
+      const cat = (t.categories || []).find(c => c.id === current_match.category_id);
+      if (cat) return cat.name;
+    }
+    return t ? t.name : '';
+  }, [current_match, tournaments]);
+
   useEffect(() => {
     broadcast_to_spectator({
       score,
+      category: get_category_label(),
       blue_name: get_blue_name(),
       red_name: get_red_name(),
       blue_club: get_blue_club(),
@@ -194,13 +208,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       winner,
     });
   }, [score, blue_penalties, red_penalties, is_running, match_status, winner,
-      get_blue_name, get_red_name, get_blue_club, get_red_club]);
+      get_blue_name, get_red_name, get_blue_club, get_red_club, get_category_label]);
 
   useEffect(() => {
     if (is_running && score.time_remaining > 0) {
       timer_ref.current = setInterval(() => {
         set_score(prev => {
           const next = { ...prev, time_remaining: prev.time_remaining - 1 };
+          if (next.time_remaining === 15) {
+            play_short_beep();
+          }
           if (next.time_remaining <= 0) {
             set_is_running(false);
             set_match_status('finished');
@@ -345,16 +362,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     set_score(prev => remove_score(prev, side, type));
   }, [match_status]);
 
+  const handle_toggle_senshu = useCallback((side: Side) => {
+    if (match_status === 'finished') return;
+    set_score(prev => toggle_senshu(prev, side));
+  }, [match_status]);
+
   const handle_add_penalty = useCallback((side: Side, level: PenaltyLevel) => {
     if (match_status === 'finished') return;
     if (side === 'blue') set_blue_penalties(prev => [...prev, level]);
     else set_red_penalties(prev => [...prev, level]);
-    set_score(prev => apply_penalty_zenshu(prev, side, level));
-    if (level === '5H') {
+
+    const is_disqualifying = (DISQUALIFYING_PENALTIES as readonly string[]).includes(level);
+    if (is_disqualifying) {
+      // HANSOKU (H) or SHIKKAKU (S): zero the offender, set opponent to 8, opponent wins.
       const other: Side = side === 'blue' ? 'red' : 'blue';
+      set_score(prev => award_disqualification(prev, side));
       set_is_running(false);
       set_match_status('finished');
       set_winner(other);
+    } else {
+      set_score(prev => apply_penalty_zenshu(prev, side, level));
     }
   }, [match_status]);
 
@@ -388,14 +415,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     set_score(prev => ({ ...prev, time_remaining: seconds }));
   }, []);
 
-  const handle_finish_match = useCallback((winner_side: Side) => {
+  const handle_finish_match = useCallback((winner_side: Side, blue_score: number, red_score: number) => {
     if (!current_match) return;
     if (current_match.tournament_id === null) return; // quick match
 
     const winner_id = winner_side === 'blue' ? current_match.blue_competitor_id : current_match.red_competitor_id;
     set_matches(prev => {
       const completed = prev.map(m =>
-        m.id === current_match.id ? { ...m, status: 'completed' as const, winner_id } : m
+        m.id === current_match.id ? { ...m, status: 'completed' as const, winner_id, blue_score, red_score } : m
       );
       const finished_match = completed.find(m => m.id === current_match.id)!;
       const advanced = advance_winner(completed, finished_match, winner_id);
@@ -421,9 +448,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (match_status === 'finished' && winner && current_match) {
-      handle_finish_match(winner);
+      handle_finish_match(winner, calculate_total(score, 'blue'), calculate_total(score, 'red'));
     }
-  }, [match_status, winner, current_match, handle_finish_match]);
+  }, [match_status, winner, current_match, handle_finish_match, score]);
+
+  // Sound the long beep whenever the match ends, however it ended
+  // (time-up, 8-point auto-win, or HANSOKU/SHIKKAKU disqualification).
+  useEffect(() => {
+    if (match_status === 'finished') {
+      play_long_beep();
+    }
+  }, [match_status]);
 
   const value: AppState = {
     page, set_page,
@@ -436,7 +471,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     current_match, start_match, start_quick_match,
     score, is_running, match_status, winner,
     blue_penalties, red_penalties, score_flash,
-    handle_score, handle_remove_score,
+    handle_score, handle_remove_score, handle_toggle_senshu,
     handle_add_penalty, handle_remove_penalty,
     handle_hajime, handle_stop, handle_resume, handle_reset,
     handle_time_change, handle_finish_match,

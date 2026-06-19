@@ -8,6 +8,7 @@ import { DEFAULT_DURATION } from '../utils/constants';
 
 interface SpectatorData {
   score: MatchScore;
+  category: string;
   blue_name: string;
   red_name: string;
   blue_club: string;
@@ -29,6 +30,7 @@ const DEFAULT_DATA: SpectatorData = {
     red_ippon: 0, red_waza_ari: 0, red_yuko: 0,
     blue_zenshu: false, red_zenshu: false,
   },
+  category: '',
   blue_name: 'AO', red_name: 'AKA',
   blue_club: '', red_club: '',
   blue_penalties: [], red_penalties: [],
@@ -60,7 +62,7 @@ export default function App() {
     };
   }, []);
 
-  const { score, blue_name, red_name, blue_club, red_club,
+  const { score, category, blue_name, red_name, blue_club, red_club,
           blue_penalties, red_penalties, blue_total, red_total,
           is_running, match_status, winner } = data;
 
@@ -75,6 +77,11 @@ export default function App() {
 
       {/* Center Timer */}
       <div className="w-48 flex flex-col items-center justify-center bg-black relative">
+        {category && (
+          <div className="mb-4 px-4 py-1.5 rounded-full bg-white/10 text-white text-xs font-bold uppercase tracking-widest text-center max-w-[11rem] truncate border border-white/20">
+            {category}
+          </div>
+        )}
         <TimerDisplay time_remaining={score.time_remaining} is_running={is_running} />
 
         {(score.blue_zenshu || score.red_zenshu) && (
