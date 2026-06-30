@@ -55,6 +55,9 @@ module.exports = {
       patterns: [
         { from: 'public/fonts', to: 'fonts' },
         { from: 'public/sounds', to: 'sounds' },
+        { from: 'public/icon.png', to: 'icon.png' },
+        { from: 'public/splash.html', to: 'splash.html' },
+        { from: 'public/kumite-splash.mp4', to: 'kumite-splash.mp4' },
       ],
     }),
     ...(is_dev ? [] : [new MiniCssExtractPlugin({ filename: '[name].css' })]),
