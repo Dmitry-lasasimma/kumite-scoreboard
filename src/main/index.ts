@@ -7,8 +7,12 @@ import {
   get_splash_window,
 } from './window_manager';
 import { IPC_CHANNELS } from '../services/ipc_service';
+import { cleanup_installer_file } from './installer_cleanup';
 
 app.whenReady().then(() => {
+  // Remove the leftover installer file (.dmg / Setup.exe) on first launch.
+  cleanup_installer_file();
+
   // Show the splash video first while the operator window preloads hidden behind it.
   const splash = create_splash_window();
   const operator = create_operator_window(false);

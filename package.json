@@ -1,7 +1,10 @@
 {
   "name": "kumite-scoreboard",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Karate Kumite Scoreboard - Tournament Management & Live Scoring",
+  "author": "Dmitry Lasasimma <devlasasimma@gmail.com>",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "copyright": "Copyright © 2026 Dmitry Lasasimma. All Rights Reserved.",
   "main": "dist/main/index.js",
   "scripts": {
     "start": "webpack --config webpack.main.config.js && concurrently \"webpack serve --config webpack.renderer.config.js\" \"wait-on http://localhost:3000 && electron .\"",
@@ -51,6 +54,7 @@
   "build": {
     "appId": "com.kumite.scoreboard",
     "productName": "Kumite Scoreboard",
+    "copyright": "Copyright © 2026 Dmitry Lasasimma. All Rights Reserved.",
     "directories": {
       "output": "release"
     },
@@ -96,7 +100,9 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "include": "build/installer.nsh",
+      "license": "LICENSE.md"
     }
   }
 }
