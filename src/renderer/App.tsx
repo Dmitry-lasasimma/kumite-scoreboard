@@ -7,6 +7,7 @@ import BracketView from './pages/BracketView';
 import BracketDetailView from './pages/BracketDetailView';
 import MatchScoring from './pages/MatchScoring';
 import QuickMatch from './pages/QuickMatch';
+import About from './pages/About';
 
 const NAV_ITEMS: { key: Page; label: string }[] = [
   { key: 'home', label: 'Home' },
@@ -14,6 +15,7 @@ const NAV_ITEMS: { key: Page; label: string }[] = [
   { key: 'competitors', label: 'Competitors' },
   { key: 'bracket', label: 'Bracket' },
   { key: 'quick_match', label: 'Quick Match' },
+  { key: 'about', label: 'About' },
 ];
 
 function open_spectator_window() {
@@ -29,7 +31,7 @@ function open_spectator_window() {
 }
 
 function AppContent() {
-  const { page, set_page, match_status } = useAppContext();
+  const { page, set_page, match_status, current_match } = useAppContext();
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -55,12 +57,16 @@ function AppContent() {
               {item.label}
             </button>
           ))}
-          {match_status !== 'idle' && page !== 'scoring' && (
+          {current_match && page !== 'scoring' && (
             <button
               onClick={() => set_page('scoring')}
-              className="nav-tab bg-kumite-red-500 text-white hover:bg-kumite-red-600 animate-pulse"
+              className={`nav-tab text-white ${
+                match_status === 'active'
+                  ? 'bg-kumite-red-500 hover:bg-kumite-red-600 animate-pulse'
+                  : 'bg-gray-900 hover:bg-gray-800'
+              }`}
             >
-              Live Match
+              {match_status === 'active' ? 'Live Match' : 'Back to Match'}
             </button>
           )}
 
@@ -92,6 +98,7 @@ function AppContent() {
         {page === 'bracket_detail' && <BracketDetailView />}
         {page === 'scoring' && <MatchScoring />}
         {page === 'quick_match' && <QuickMatch />}
+        {page === 'about' && <About />}
       </main>
     </div>
   );

@@ -70,6 +70,7 @@ export function create_operator_window(show: boolean = true): BrowserWindow {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      plugins: true, // enable Chromium's built-in PDF viewer for export previews
     },
   });
 

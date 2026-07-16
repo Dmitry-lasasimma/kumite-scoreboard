@@ -1,6 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { Tournament, TournamentCategory, PairingConstraint } from '../../types/tournament';
 import { useAppContext } from '../context/AppContext';
+import { MATCH_DURATIONS, DEFAULT_DURATION } from '../../utils/constants';
+import { format_time } from '../../utils/validators';
 import { v4 as uuid } from 'uuid';
 
 const CONSTRAINT_OPTIONS: { value: PairingConstraint; label: string; desc: string }[] = [
@@ -14,6 +16,7 @@ export default function TournamentSetup() {
   const { tournaments, add_tournament, update_tournament, delete_tournament, set_page, tournament_competitors } = useAppContext();
   const [name, set_name] = useState('');
   const [constraint, set_constraint] = useState<PairingConstraint>('open');
+  const [duration, set_duration] = useState<number>(DEFAULT_DURATION);
   const [categories, set_categories] = useState<TournamentCategory[]>([]);
   const [category_input, set_category_input] = useState('');
 
@@ -40,13 +43,15 @@ export default function TournamentSetup() {
       name: name.trim(),
       pairing_constraint: constraint,
       categories,
+      default_duration: duration,
       status: 'pending',
     };
     add_tournament(tournament);
     set_name('');
     set_constraint('open');
+    set_duration(DEFAULT_DURATION);
     set_categories([]);
-  }, [name, constraint, categories, add_tournament]);
+  }, [name, constraint, duration, categories, add_tournament]);
 
   /** Add a category to an existing tournament */
   const handle_add_edit_category = useCallback((tid: string) => {
@@ -104,6 +109,27 @@ export default function TournamentSetup() {
                 ))}
               </div>
             </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Match Time</label>
+              <div className="flex gap-2">
+                {MATCH_DURATIONS.map(d => (
+                  <button
+                    key={d.seconds}
+                    onClick={() => set_duration(d.seconds)}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-semibold font-score transition-all border-2
+                      ${duration === d.seconds
+                        ? 'border-gray-900 bg-gray-900 text-white shadow-sm'
+                        : 'border-gray-100 text-gray-600 hover:border-gray-300'}`}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+              <div className="text-xs text-gray-400 mt-1.5">
+                Every match in this tournament starts at this time automatically.
+              </div>
+            </div>
+
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Categories (optional)</label>
               <div className="flex gap-2 mb-2">
@@ -173,6 +199,9 @@ export default function TournamentSetup() {
                           <span className="px-2.5 py-1 rounded-lg bg-gray-100 text-gray-600 text-xs font-semibold capitalize">
                             {t.pairing_constraint.replace('_', ' ')}
                           </span>
+                          <span className="px-2.5 py-1 rounded-lg bg-orange-50 text-orange-700 text-xs font-semibold font-score">
+                            ⏱ {format_time(t.default_duration ?? DEFAULT_DURATION)}
+                          </span>
                           <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold
                             ${t.status === 'pending' ? 'bg-yellow-50 text-yellow-700' :
                               t.status === 'in_progress' ? 'bg-green-50 text-green-700' :
@@ -198,7 +227,7 @@ export default function TournamentSetup() {
                               : 'bg-purple-50 text-purple-600 hover:bg-purple-100'
                           }`}
                         >
-                          {is_editing ? 'Done' : 'Edit Categories'}
+                          {is_editing ? 'Done' : 'Edit'}
                         </button>
                         <button
                           onClick={() => set_page('competitors')}
@@ -224,9 +253,30 @@ export default function TournamentSetup() {
                       </div>
                     )}
 
-                    {/* Edit categories panel */}
+                    {/* Edit panel */}
                     {is_editing && (
                       <div className="mt-3 pt-3 border-t border-gray-100">
+                        <label className="block text-xs font-semibold text-purple-600 uppercase tracking-wider mb-2">
+                          Match Time
+                        </label>
+                        <div className="flex gap-2 mb-4">
+                          {MATCH_DURATIONS.map(d => {
+                            const current = (t.default_duration ?? DEFAULT_DURATION) === d.seconds;
+                            return (
+                              <button
+                                key={d.seconds}
+                                onClick={() => update_tournament({ ...t, default_duration: d.seconds })}
+                                className={`flex-1 py-2 rounded-xl text-sm font-semibold font-score transition-all border-2
+                                  ${current
+                                    ? 'border-gray-900 bg-gray-900 text-white shadow-sm'
+                                    : 'border-gray-100 text-gray-600 hover:border-gray-300'}`}
+                              >
+                                {d.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+
                         <label className="block text-xs font-semibold text-purple-600 uppercase tracking-wider mb-2">
                           Manage Categories
                         </label>

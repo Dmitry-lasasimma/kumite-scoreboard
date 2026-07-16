@@ -10,12 +10,15 @@ interface TimerControlProps {
   on_stop: () => void;
   on_resume: () => void;
   on_reset: () => void;
+  on_end_match: (silent?: boolean) => void;
   on_time_change: (seconds: number) => void;
+  end_highlight?: boolean;
 }
 
 export default function TimerControl({
   time_remaining, is_running, match_status,
-  on_hajime, on_stop, on_resume, on_reset, on_time_change,
+  on_hajime, on_stop, on_resume, on_reset, on_end_match, on_time_change,
+  end_highlight = false,
 }: TimerControlProps) {
   const [show_input, set_show_input] = useState(false);
   const [time_input, set_time_input] = useState('');
@@ -90,8 +93,8 @@ export default function TimerControl({
           </div>
           {match_status === 'active' && (
             <div className={`text-xs mt-1 uppercase tracking-widest font-semibold
-              ${is_running ? 'text-green-400' : 'text-yellow-400'}`}>
-              {is_running ? 'Running' : 'Paused'}
+              ${is_zero ? 'text-kumite-red-400 animate-pulse' : is_running ? 'text-green-400' : 'text-yellow-400'}`}>
+              {is_zero ? 'Time Up' : is_running ? 'Running' : 'Paused'}
             </div>
           )}
         </button>
@@ -164,6 +167,31 @@ export default function TimerControl({
                          hover:bg-gray-300 transition-all active:scale-[0.98]"
             >
               Reset
+            </button>
+          </div>
+        )}
+
+        {match_status === 'active' && (
+          <div className="flex gap-2">
+            <button
+              onClick={() => on_end_match(false)}
+              className={`flex-1 py-3 rounded-xl text-white font-score text-base font-bold
+                         transition-all shadow-lg active:scale-[0.98] uppercase tracking-wider
+                         ${is_zero || end_highlight
+                           ? 'bg-kumite-red-600 hover:bg-kumite-red-500 animate-pulse'
+                           : 'bg-gray-700 hover:bg-gray-600'}`}
+              title="End the match and sound the horn"
+            >
+              End Match
+            </button>
+            <button
+              onClick={() => on_end_match(true)}
+              className="py-3 px-4 rounded-xl bg-gray-100 text-gray-600 font-score text-base font-bold
+                         hover:bg-gray-200 transition-all active:scale-[0.98] uppercase tracking-wider
+                         flex items-center gap-1.5"
+              title="End the match silently (no horn)"
+            >
+              <span aria-hidden>🔇</span> Silent
             </button>
           </div>
         )}

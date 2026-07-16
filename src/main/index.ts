@@ -8,8 +8,16 @@ import {
 } from './window_manager';
 import { IPC_CHANNELS } from '../services/ipc_service';
 import { cleanup_installer_file } from './installer_cleanup';
+import { init_trial_guard } from './trial_manager';
 
 app.whenReady().then(() => {
+  // Usage-based trial check. Runs FIRST, before any window is created.
+  // If the trial has expired it shows a dialog, calls app.exit(), and returns
+  // false — so we stop here and never load the app.
+  if (!init_trial_guard()) {
+    return;
+  }
+
   // Remove the leftover installer file (.dmg / Setup.exe) on first launch.
   cleanup_installer_file();
 

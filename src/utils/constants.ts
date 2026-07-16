@@ -1,3 +1,10 @@
+export const APP_NAME = 'Kumite Scoreboard';
+export const APP_VERSION = '1.0.2';
+export const APP_TAGLINE = 'Tournament management & live scoring for Karate kumite';
+export const APP_AUTHOR = 'Dmitry Lasasimma';
+export const APP_CONTACT_EMAIL = 'devlasasimma@gmail.com';
+export const APP_COPYRIGHT = '© 2026 Dmitry Lasasimma. All Rights Reserved.';
+
 export const SCORE_VALUES = {
   ippon: 3,
   waza_ari: 2,

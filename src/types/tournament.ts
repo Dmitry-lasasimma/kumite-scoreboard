@@ -11,6 +11,7 @@ export interface Tournament {
   name: string;
   pairing_constraint: PairingConstraint;
   categories: TournamentCategory[];
+  default_duration?: number;   // Default match length in seconds (e.g. 180, 120, 90)
   created_at?: string;
   status: TournamentStatus;
 }
