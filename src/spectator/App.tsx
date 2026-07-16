@@ -69,9 +69,9 @@ export default function App() {
   return (
     <div className="h-screen w-screen flex bg-black overflow-hidden relative">
       {/* Blue Side */}
-      <div className="flex-1 bg-gradient-to-br from-kumite-blue-600 to-kumite-blue-800 flex flex-col justify-between p-6 relative">
-        <CompetitorInfo name={blue_name} club={blue_club} side="blue" has_zenshu={score.blue_zenshu} />
-        <ScoreDisplay total={blue_total} score={score} side="blue" />
+      <div className="flex-1 bg-gradient-to-br from-kumite-blue-600 to-kumite-blue-800 flex flex-col justify-between p-6 pb-16 relative">
+        <CompetitorInfo name={blue_name} club={blue_club} side="blue" />
+        <ScoreDisplay total={blue_total} score={score} side="blue" has_zenshu={score.blue_zenshu} />
         <PenaltyDisplay penalties={blue_penalties} side="blue" />
       </div>
 
@@ -83,15 +83,6 @@ export default function App() {
           </div>
         )}
         <TimerDisplay time_remaining={score.time_remaining} is_running={is_running} />
-
-        {(score.blue_zenshu || score.red_zenshu) && (
-          <div className={`mt-4 px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest
-            ${score.blue_zenshu
-              ? 'bg-kumite-blue-500/30 text-kumite-blue-300 border border-kumite-blue-400/30'
-              : 'bg-kumite-red-500/30 text-kumite-red-300 border border-kumite-red-400/30'}`}>
-            Senshu
-          </div>
-        )}
 
         {match_status === 'finished' && winner && (
           <div className={`mt-4 px-4 py-2 rounded-xl text-sm font-bold uppercase tracking-wider text-center
@@ -108,9 +99,9 @@ export default function App() {
       </div>
 
       {/* Red Side */}
-      <div className="flex-1 bg-gradient-to-bl from-kumite-red-600 to-kumite-red-800 flex flex-col justify-between p-6 relative">
-        <CompetitorInfo name={red_name} club={red_club} side="red" has_zenshu={score.red_zenshu} />
-        <ScoreDisplay total={red_total} score={score} side="red" />
+      <div className="flex-1 bg-gradient-to-bl from-kumite-red-600 to-kumite-red-800 flex flex-col justify-between p-6 pb-16 relative">
+        <CompetitorInfo name={red_name} club={red_club} side="red" />
+        <ScoreDisplay total={red_total} score={score} side="red" has_zenshu={score.red_zenshu} />
         <PenaltyDisplay penalties={red_penalties} side="red" />
       </div>
     </div>

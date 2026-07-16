@@ -6,10 +6,10 @@ import { MatchScore, PenaltyLevel, Side, ScoreType } from '../../types/score';
 import { add_score, remove_score, calculate_total, check_auto_win, determine_winner, apply_penalty_zenshu, toggle_senshu, award_disqualification } from '../../services/scorer_service';
 import { DEFAULT_DURATION, DISQUALIFYING_PENALTIES } from '../../utils/constants';
 import { play_short_beep, play_long_beep } from '../../utils/sounds';
-import { generate_bracket, advance_winner } from '../../services/bracket_generator';
+import { generate_bracket, advance_winner, reset_match_score, reset_bracket_scores, normalize_brackets } from '../../services/bracket_generator';
 import { v4 as uuid } from 'uuid';
 
-export type Page = 'home' | 'tournament_setup' | 'competitors' | 'bracket' | 'bracket_detail' | 'scoring' | 'quick_match';
+export type Page = 'home' | 'tournament_setup' | 'competitors' | 'bracket' | 'bracket_detail' | 'scoring' | 'quick_match' | 'about';
 
 function create_empty_score(): MatchScore {
   return {
@@ -64,6 +64,12 @@ interface AppState {
   matches: Match[];
   generate_tournament_bracket: (tournament_id: string) => void;
   generate_category_bracket: (tournament_id: string, category_id: string) => void;
+  reset_single_match: (match_id: string) => void;
+  reset_bracket: (tournament_id: string | null, category_id: string | null) => void;
+  edit_move_slot: (from_match_id: string, from_side: Side, to_match_id: string, to_side: Side, mode: 'swap' | 'overwrite') => void;
+  edit_assign_slot: (match_id: string, side: Side, competitor_id: string) => void;
+  edit_set_match_score: (match_id: string, side: Side, value: number | undefined) => void;
+  edit_set_match_winner: (match_id: string, winner_id: string | null) => void;
 
   current_match: Match | null;
   start_match: (match: Match) => void;
@@ -86,6 +92,7 @@ interface AppState {
   handle_stop: () => void;
   handle_resume: () => void;
   handle_reset: () => void;
+  handle_end_match: (silent?: boolean) => void;
   handle_time_change: (seconds: number) => void;
   handle_finish_match: (winner_side: Side, blue_score: number, red_score: number) => void;
 
@@ -132,7 +139,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [tournaments, set_tournaments] = useState<Tournament[]>(() => load_stored('kumite_tournaments', []));
   const [competitors, set_competitors] = useState<Competitor[]>(() => load_stored('kumite_competitors', []));
   const [tournament_competitors, set_tc] = useState<Record<string, string[]>>(() => load_stored('kumite_tc', {}));
-  const [matches, set_matches] = useState<Match[]>(() => load_stored('kumite_matches', []));
+  const [matches, set_matches] = useState<Match[]>(() => normalize_brackets(load_stored('kumite_matches', [])));
   const [selected_tournament_id, set_selected_tournament_id] = useState<string | null>(null);
   const [selected_category_id, set_selected_category_id] = useState<string | null>(null);
 
@@ -219,10 +226,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             play_short_beep();
           }
           if (next.time_remaining <= 0) {
+            // Time is up: stop the clock and sound the long time-up horn
+            // automatically, but keep the match ACTIVE. The referee must still
+            // officially end the match (or add extra time and resume) before a
+            // winner is declared. See handle_end_match.
             set_is_running(false);
-            set_match_status('finished');
-            const w = determine_winner(next);
-            set_winner(w);
+            play_long_beep();
           }
           return next;
         });
@@ -307,17 +316,119 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     set_tournaments(prev => prev.map(x => x.id === tid ? { ...x, status: 'in_progress' as const } : x));
   }, [tournaments, tournament_competitors, competitors]);
 
+  const reset_single_match = useCallback((match_id: string) => {
+    let tid: string | null = null;
+    set_matches(prev => {
+      const target = prev.find(m => m.id === match_id);
+      tid = target ? target.tournament_id : null;
+      return reset_match_score(prev, match_id);
+    });
+    // A reset re-opens the bracket, so the tournament is no longer completed.
+    if (tid) set_tournaments(tp => tp.map(t => t.id === tid && t.status === 'completed'
+      ? { ...t, status: 'in_progress' as const } : t));
+    // If the reset match is the one loaded in the scoring view, drop it.
+    set_current_match(prev => (prev && prev.id === match_id ? null : prev));
+  }, []);
+
+  const reset_bracket = useCallback((tid: string | null, cid: string | null) => {
+    set_matches(prev => reset_bracket_scores(prev, tid, cid));
+    if (tid) set_tournaments(tp => tp.map(t => t.id === tid && t.status === 'completed'
+      ? { ...t, status: 'in_progress' as const } : t));
+    set_current_match(prev => (prev && prev.tournament_id === tid && prev.category_id === cid ? null : prev));
+  }, []);
+
+  /* ── Manual bracket editing ── */
+
+  const set_slot = (m: Match, side: Side, value: string): Match =>
+    side === 'blue' ? { ...m, blue_competitor_id: value } : { ...m, red_competitor_id: value };
+
+  // Clear a match's played result (used after re-arranging competitors).
+  const clear_result = (m: Match): Match => ({
+    ...m, status: 'pending', winner_id: null, blue_score: undefined, red_score: undefined,
+  });
+
+  const edit_move_slot = useCallback((
+    from_id: string, from_side: Side, to_id: string, to_side: Side, mode: 'swap' | 'overwrite',
+  ) => {
+    if (from_id === to_id && from_side === to_side) return;
+    set_matches(prev => {
+      const from_m = prev.find(x => x.id === from_id);
+      const to_m = prev.find(x => x.id === to_id);
+      if (!from_m || !to_m) return prev;
+      const from_comp = from_side === 'blue' ? from_m.blue_competitor_id : from_m.red_competitor_id;
+      const to_comp = to_side === 'blue' ? to_m.blue_competitor_id : to_m.red_competitor_id;
+
+      return prev.map(x => {
+        // Both slots live in the same match.
+        if (x.id === from_id && from_id === to_id) {
+          let nx = { ...x };
+          if (mode === 'swap') {
+            nx = set_slot(nx, from_side, to_comp);
+            nx = set_slot(nx, to_side, from_comp);
+          } else {
+            nx = set_slot(nx, to_side, from_comp);
+            nx = set_slot(nx, from_side, 'TBD');
+          }
+          return clear_result(nx);
+        }
+        if (x.id === to_id) {
+          return clear_result(set_slot({ ...x }, to_side, from_comp));
+        }
+        if (x.id === from_id) {
+          // swap → receives target's competitor; overwrite → vacated.
+          return clear_result(set_slot({ ...x }, from_side, mode === 'swap' ? to_comp : 'TBD'));
+        }
+        return x;
+      });
+    });
+  }, []);
+
+  // Assign a specific competitor (or 'BYE' / 'TBD') to a slot and clear the
+  // match's played result. Used by the edit-mode competitor picker.
+  const edit_assign_slot = useCallback((match_id: string, side: Side, competitor_id: string) => {
+    set_matches(prev => prev.map(m =>
+      m.id === match_id ? clear_result(set_slot({ ...m }, side, competitor_id)) : m));
+  }, []);
+
+  const edit_set_match_score = useCallback((match_id: string, side: Side, value: number | undefined) => {
+    set_matches(prev => prev.map(m => m.id === match_id
+      ? { ...m, ...(side === 'blue' ? { blue_score: value } : { red_score: value }) }
+      : m));
+  }, []);
+
+  const edit_set_match_winner = useCallback((match_id: string, winner_id: string | null) => {
+    set_matches(prev => {
+      const m = prev.find(x => x.id === match_id);
+      if (!m) return prev;
+      if (winner_id === null) {
+        return prev.map(x => x.id === match_id ? { ...x, winner_id: null, status: 'pending' as const } : x);
+      }
+      const completed = prev.map(x => x.id === match_id
+        ? { ...x, status: 'completed' as const, winner_id } : x);
+      const fm = completed.find(x => x.id === match_id)!;
+      return advance_winner(completed, fm, winner_id);
+    });
+  }, []);
+
   const start_match = useCallback((match: Match) => {
+    // Use the tournament's configured match time so the operator doesn't have
+    // to pick a duration every time a match starts.
+    const t = match.tournament_id ? tournaments.find(x => x.id === match.tournament_id) : null;
+    const dur = t?.default_duration ?? DEFAULT_DURATION;
+    const base = create_empty_score();
     set_current_match(match);
-    set_score(create_empty_score());
+    set_score({ ...base, time_remaining: dur, duration_minutes: Math.max(1, Math.round(dur / 60)) });
     set_is_running(false);
     set_match_status('idle');
     set_winner(null);
     set_blue_penalties([]);
     set_red_penalties([]);
+    // Keep the bracket selection in sync so "View Bracket" returns to this bracket.
+    set_selected_tournament_id(match.tournament_id);
+    set_selected_category_id(match.category_id);
     set_matches(prev => prev.map(m => m.id === match.id ? { ...m, status: 'in_progress' as const } : m));
     set_page('scoring');
-  }, []);
+  }, [tournaments]);
 
   const start_quick_match = useCallback(() => {
     const quick: Match = {
@@ -345,11 +456,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (match_status === 'finished') return;
     set_score(prev => {
       const updated = add_score(prev, side, type);
+      const prev_auto = check_auto_win(prev);
       const auto = check_auto_win(updated);
-      if (auto) {
+      // 8-point lead reached: stop the clock and sound the long beep to signal
+      // the win condition, but DO NOT finish yet — the referee must officially
+      // end the match (they may add time or review before confirming).
+      if (auto && !prev_auto) {
         set_is_running(false);
-        set_match_status('finished');
-        set_winner(auto);
+        play_long_beep();
       }
       return updated;
     });
@@ -380,6 +494,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       set_is_running(false);
       set_match_status('finished');
       set_winner(other);
+      play_long_beep(); // disqualification ends the match decisively
     } else {
       set_score(prev => apply_penalty_zenshu(prev, side, level));
     }
@@ -414,6 +529,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const handle_time_change = useCallback((seconds: number) => {
     set_score(prev => ({ ...prev, time_remaining: seconds }));
   }, []);
+
+  /**
+   * Officially end the match on the referee's command. Stops the clock,
+   * determines the winner from the current score (with Senshu as tie-breaker)
+   * and marks the match finished. Used when time is up or the referee declares
+   * a decision.
+   */
+  const handle_end_match = useCallback((silent?: boolean) => {
+    if (match_status !== 'active') return;
+    set_is_running(false);
+    set_match_status('finished');
+    set_winner(determine_winner(score));
+    // Normal end sounds the long beep; a silent end declares the winner quietly.
+    if (!silent) play_long_beep();
+  }, [match_status, score]);
 
   const handle_finish_match = useCallback((winner_side: Side, blue_score: number, red_score: number) => {
     if (!current_match) return;
@@ -452,13 +582,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [match_status, winner, current_match, handle_finish_match, score]);
 
-  // Sound the long beep whenever the match ends, however it ended
-  // (time-up, 8-point auto-win, or HANSOKU/SHIKKAKU disqualification).
-  useEffect(() => {
-    if (match_status === 'finished') {
-      play_long_beep();
-    }
-  }, [match_status]);
+  // Note: the long beep is triggered explicitly at each end path — time-up
+  // (auto), 8-point lead, disqualification, and a NORMAL "End Match". A SILENT
+  // "End Match" declares the winner without any sound.
 
   const value: AppState = {
     page, set_page,
@@ -468,12 +594,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     competitors, add_competitor, update_competitor, delete_competitor,
     tournament_competitors, add_competitor_to_tournament, remove_competitor_from_tournament,
     matches, generate_tournament_bracket, generate_category_bracket,
+    reset_single_match, reset_bracket,
+    edit_move_slot, edit_assign_slot, edit_set_match_score, edit_set_match_winner,
     current_match, start_match, start_quick_match,
     score, is_running, match_status, winner,
     blue_penalties, red_penalties, score_flash,
     handle_score, handle_remove_score, handle_toggle_senshu,
     handle_add_penalty, handle_remove_penalty,
-    handle_hajime, handle_stop, handle_resume, handle_reset,
+    handle_hajime, handle_stop, handle_resume, handle_reset, handle_end_match,
     handle_time_change, handle_finish_match,
     get_competitor, get_tournament,
   };

@@ -174,36 +174,31 @@ function cascade_auto_complete(matches: Match[], tid: string | null, cid: string
     /* ── 2. Auto-complete 3rd-place match ── */
     const third = scoped.find(m => m.bracket_round === -1 && m.status === 'pending');
     if (third && total >= 2) {
-      const has_blue = third.blue_competitor_id !== 'TBD';
-      const has_red  = third.red_competitor_id  !== 'TBD';
+      // A slot only counts as a real opponent when it holds an actual
+      // competitor — 'TBD' (unfilled) and 'BYE' (no opponent) do not.
+      const real_blue = third.blue_competitor_id !== 'TBD' && third.blue_competitor_id !== 'BYE';
+      const real_red  = third.red_competitor_id  !== 'TBD' && third.red_competitor_id  !== 'BYE';
 
-      // Case A: one real competitor, one TBD → check if all semis are done
-      if (has_blue !== has_red) {
-        const semi_round = total - 1;
-        const semis = get_round(scoped, semi_round);
-        const all_semis_done = semis.length > 0 && semis.every(m => m.status === 'completed');
+      const semi_round = total - 1;
+      const semis = get_round(scoped, semi_round);
+      const all_semis_done = semis.length > 0 && semis.every(m => m.status === 'completed');
 
-        if (all_semis_done) {
-          const winner_id = has_blue ? third.blue_competitor_id : third.red_competitor_id;
-          if (!has_blue) third.blue_competitor_id = 'BYE';
-          if (!has_red) third.red_competitor_id = 'BYE';
-          third.status = 'completed';
-          third.winner_id = winner_id;
-          changed = true;
-        }
+      // Case A: exactly one real competitor (the other is a BYE or will never
+      // be filled) → award 3rd place to that competitor once the semis settle.
+      if (real_blue !== real_red && all_semis_done) {
+        const winner_id = real_blue ? third.blue_competitor_id : third.red_competitor_id;
+        if (!real_blue) third.blue_competitor_id = 'BYE';
+        if (!real_red)  third.red_competitor_id  = 'BYE';
+        third.status = 'completed';
+        third.winner_id = winner_id;
+        changed = true;
       }
 
-      // Case B: both TBD but all semis done (all semis were BYEs — very unlikely but safe)
-      if (!has_blue && !has_red) {
-        const semi_round = total - 1;
-        const semis = get_round(scoped, semi_round);
-        const all_semis_done = semis.length > 0 && semis.every(m => m.status === 'completed');
-        if (all_semis_done) {
-          // No real losers → remove the 3rd place match
-          third.status = 'completed';
-          third.winner_id = null;
-          changed = true;
-        }
+      // Case B: no real competitors at all but semis done → drop the 3rd place.
+      if (!real_blue && !real_red && all_semis_done) {
+        third.status = 'completed';
+        third.winner_id = null;
+        changed = true;
       }
     }
 
@@ -342,6 +337,187 @@ export function generate_bracket(
   cascade_auto_complete(matches, tournament_id, category_id);
 
   return matches;
+}
+
+/* ───────────────── reset scores (no re-draw) ───────────────── */
+
+/**
+ * Clear a competitor from the downstream match a completed match fed into,
+ * then reset that downstream match and continue clearing along the path.
+ * Sibling matches (fed by other sources) are left untouched.
+ * Mutates `scoped` in place.
+ */
+function clear_downstream_path(
+  scoped: Match[],
+  round: number,
+  match_index: number,
+  total: number,
+): void {
+  const next = round + 1;
+  if (next > total) return;
+
+  const next_matches = get_round(scoped, next);
+  const target_idx = Math.floor(match_index / 2);
+  const is_blue = match_index % 2 === 0;
+  const nm = next_matches[target_idx];
+  if (!nm) return;
+
+  // Empty the slot that the reset match had filled.
+  if (is_blue) nm.blue_competitor_id = 'TBD';
+  else nm.red_competitor_id = 'TBD';
+
+  const had_advanced = nm.status === 'completed';
+
+  // The downstream match can no longer be considered decided.
+  nm.status = 'pending';
+  nm.winner_id = null;
+  nm.blue_score = undefined;
+  nm.red_score = undefined;
+
+  if (had_advanced) {
+    const nm_index = next_matches.findIndex(x => x.id === nm.id);
+    clear_downstream_path(scoped, next, nm_index, total);
+  }
+}
+
+/**
+ * Reset a SINGLE match's score/result without regenerating the bracket.
+ * Clears the match's score and winner (back to "pending"), pulls its
+ * advanced competitor out of every downstream match it affected, and, if it
+ * was a semifinal, removes its loser from the 3rd-place match.
+ *
+ * BYE / auto-completed matches cannot be reset (nothing was scored).
+ * Returns a NEW array.
+ */
+export function reset_match_score(matches: Match[], match_id: string): Match[] {
+  const updated = matches.map(m => ({ ...m }));
+  const target = updated.find(m => m.id === match_id);
+  if (!target) return updated;
+
+  // Don't reset BYE / auto-win placeholder matches.
+  const has_bye = target.blue_competitor_id === 'BYE' || target.red_competitor_id === 'BYE';
+  const has_tbd = target.blue_competitor_id === 'TBD' || target.red_competitor_id === 'TBD';
+  if (has_bye || has_tbd) return updated;
+
+  const tid = target.tournament_id;
+  const cid = target.category_id;
+  const scoped = get_scoped(updated, tid, cid);
+  const total = get_total_rounds_from_matches(scoped);
+  const round = target.bracket_round;
+  const prev_winner = target.winner_id;
+
+  // Reset the target match itself.
+  target.status = 'pending';
+  target.winner_id = null;
+  target.blue_score = undefined;
+  target.red_score = undefined;
+
+  if (round > 0) {
+    const same_round = get_round(scoped, round);
+    const match_index = same_round.findIndex(m => m.id === target.id);
+    if (match_index >= 0) {
+      clear_downstream_path(scoped, round, match_index, total);
+    }
+
+    // Semifinal → pull its loser back out of the 3rd-place match.
+    const semifinal_round = total - 1;
+    if (round === semifinal_round && semifinal_round >= 1 && prev_winner) {
+      const loser_id = target.blue_competitor_id === prev_winner
+        ? target.red_competitor_id
+        : target.blue_competitor_id;
+      const third = scoped.find(m => m.bracket_round === -1);
+      if (third && (third.blue_competitor_id === loser_id || third.red_competitor_id === loser_id)) {
+        if (third.blue_competitor_id === loser_id) third.blue_competitor_id = 'TBD';
+        if (third.red_competitor_id === loser_id) third.red_competitor_id = 'TBD';
+        third.status = 'pending';
+        third.winner_id = null;
+        third.blue_score = undefined;
+        third.red_score = undefined;
+      }
+    }
+  }
+
+  return updated;
+}
+
+/**
+ * Reset ALL scores for a bracket (tournament + category) back to its freshly
+ * drawn state WITHOUT re-shuffling the pairings. Round-1 pairings are kept;
+ * BYE auto-wins are preserved; every played result is cleared and later
+ * rounds return to "TBD / pending". BYE advancement and cascade auto-completion
+ * are re-applied so the empty bracket is structurally identical to generation.
+ *
+ * Returns a NEW array.
+ */
+export function reset_bracket_scores(
+  matches: Match[],
+  tid: string | null,
+  cid: string | null,
+): Match[] {
+  const updated = matches.map(m => ({ ...m }));
+
+  for (const m of updated) {
+    if (m.tournament_id !== tid || m.category_id !== cid) continue;
+
+    m.blue_score = undefined;
+    m.red_score = undefined;
+
+    if (m.bracket_round === 1) {
+      // Round 1: keep the pairing. BYE matches stay auto-won.
+      if (m.red_competitor_id === 'BYE' || m.blue_competitor_id === 'BYE') {
+        const real_id = m.red_competitor_id === 'BYE' ? m.blue_competitor_id : m.red_competitor_id;
+        m.status = 'completed';
+        m.winner_id = real_id;
+      } else {
+        m.status = 'pending';
+        m.winner_id = null;
+      }
+    } else {
+      // Round 2+ and 3rd place: clear back to placeholders.
+      m.blue_competitor_id = 'TBD';
+      m.red_competitor_id = 'TBD';
+      m.status = 'pending';
+      m.winner_id = null;
+    }
+  }
+
+  // Re-advance BYE winners, then cascade auto-completes (mirrors generation).
+  const scoped = get_scoped(updated, tid, cid);
+  const bye_matches = scoped.filter(
+    m => m.bracket_round === 1 && m.status === 'completed' &&
+      (m.red_competitor_id === 'BYE' || m.blue_competitor_id === 'BYE'),
+  );
+  const r1 = get_round(scoped, 1);
+  for (const bm of bye_matches) {
+    const idx = r1.findIndex(m => m.id === bm.id);
+    if (idx >= 0 && bm.winner_id) {
+      place_winner_in_next_round(scoped, 1, idx, bm.winner_id);
+    }
+  }
+  cascade_auto_complete(updated, tid, cid);
+
+  return updated;
+}
+
+/**
+ * Re-run cascade auto-completion across every bracket. Safe to call on stored
+ * data: it only settles impossible-TBD matches and BYE-vs-real 3rd-place
+ * matches, repairing brackets that were saved before those fixes existed.
+ * Real, playable matches are left untouched. Returns a NEW array.
+ */
+export function normalize_brackets(matches: Match[]): Match[] {
+  const updated = matches.map(m => ({ ...m }));
+  const scopes = new Map<string, { tid: string | null; cid: string | null }>();
+  for (const m of updated) {
+    if (m.bracket_round === 0) continue; // quick matches aren't brackets
+    const key = `${m.tournament_id}||${m.category_id}`;
+    if (!scopes.has(key)) scopes.set(key, { tid: m.tournament_id, cid: m.category_id });
+  }
+  for (const { tid, cid } of scopes.values()) {
+    if (tid === null) continue;
+    cascade_auto_complete(updated, tid, cid);
+  }
+  return updated;
 }
 
 /**

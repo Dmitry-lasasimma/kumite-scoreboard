@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAppContext } from '../context/AppContext';
-import { calculate_total } from '../../services/scorer_service';
+import { calculate_total, check_auto_win } from '../../services/scorer_service';
 import ScoreButton from '../components/ScoreButton';
 import TimerControl from '../components/TimerControl';
 import PenaltyPanel from '../components/PenaltyPanel';
@@ -11,7 +11,7 @@ export default function MatchScoring() {
     blue_penalties, red_penalties, score_flash,
     handle_score, handle_remove_score, handle_toggle_senshu,
     handle_add_penalty, handle_remove_penalty,
-    handle_hajime, handle_stop, handle_resume, handle_reset,
+    handle_hajime, handle_stop, handle_resume, handle_reset, handle_end_match,
     handle_time_change,
     current_match, get_competitor, set_page,
   } = useAppContext();
@@ -51,8 +51,34 @@ export default function MatchScoring() {
     );
   }
 
+  const round_label = current_match.bracket_round === -1
+    ? '3rd Place'
+    : `Round ${current_match.bracket_round} · Match ${current_match.match_number}`;
+
   return (
     <div className="h-full flex flex-col p-4 gap-3">
+      {/* Operator top bar: match context + bracket navigation */}
+      <div className="flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          {!is_quick && (
+            <button
+              onClick={() => set_page('bracket_detail')}
+              className="px-3 py-2 rounded-xl bg-gray-100 text-gray-700 text-sm font-semibold hover:bg-gray-200 transition-all whitespace-nowrap"
+            >
+              ← View Bracket
+            </button>
+          )}
+          <div className="text-sm font-semibold text-gray-500 truncate">
+            {is_quick ? 'Quick Match' : round_label}
+          </div>
+        </div>
+        {!is_quick && match_status === 'active' && (
+          <span className="px-3 py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-semibold uppercase tracking-wider animate-pulse">
+            Match live — timer keeps running
+          </span>
+        )}
+      </div>
+
       {/* Winner Banner */}
       {match_status === 'finished' && (
         <div className={`rounded-2xl p-3 text-center font-score text-xl text-white shadow-xl flex items-center justify-center gap-4 ${
@@ -120,7 +146,9 @@ export default function MatchScoring() {
             on_stop={handle_stop}
             on_resume={handle_resume}
             on_reset={handle_reset}
+            on_end_match={handle_end_match}
             on_time_change={handle_time_change}
+            end_highlight={check_auto_win(score) !== null}
           />
         </div>
 
