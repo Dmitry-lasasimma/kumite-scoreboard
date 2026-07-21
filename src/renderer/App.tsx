@@ -63,10 +63,13 @@ function AppContent() {
               className={`nav-tab text-white ${
                 match_status === 'active'
                   ? 'bg-kumite-red-500 hover:bg-kumite-red-600 animate-pulse'
-                  : 'bg-gray-900 hover:bg-gray-800'
+                  : match_status === 'hantei'
+                    ? 'bg-yellow-500 hover:bg-yellow-600 animate-pulse'
+                    : 'bg-gray-900 hover:bg-gray-800'
               }`}
             >
-              {match_status === 'active' ? 'Live Match' : 'Back to Match'}
+              {match_status === 'active' ? 'Live Match'
+                : match_status === 'hantei' ? 'Hantei' : 'Back to Match'}
             </button>
           )}
 

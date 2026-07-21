@@ -1,11 +1,16 @@
 import React, { useState, useCallback } from 'react';
-import { format_time, parse_time_input } from '../../utils/validators';
+import { format_time, format_time_precise, parse_time_input, is_precise_window } from '../../utils/validators';
 import { MATCH_DURATIONS } from '../../utils/constants';
+import { MatchStatus, ClockAnchor } from '../../types/score';
+import FixedDigits from '../../shared/fixed_digits';
+import { use_precise_time } from '../../shared/use_precise_time';
 
 interface TimerControlProps {
   time_remaining: number;
   is_running: boolean;
-  match_status: 'idle' | 'active' | 'finished';
+  /** The running clock, used to render the exact time each frame. */
+  clock_anchor: ClockAnchor | null;
+  match_status: MatchStatus;
   on_hajime: () => void;
   on_stop: () => void;
   on_resume: () => void;
@@ -16,7 +21,7 @@ interface TimerControlProps {
 }
 
 export default function TimerControl({
-  time_remaining, is_running, match_status,
+  time_remaining, is_running, clock_anchor, match_status,
   on_hajime, on_stop, on_resume, on_reset, on_end_match, on_time_change,
   end_highlight = false,
 }: TimerControlProps) {
@@ -43,8 +48,18 @@ export default function TimerControl({
     if (e.key === 'Escape') set_show_input(false);
   }, [handle_time_submit]);
 
-  const is_low_time = time_remaining <= 30 && time_remaining > 0;
-  const is_zero = time_remaining <= 0;
+  // Match the spectator board exactly in the closing seconds, so the operator
+  // never reads "00:00" while the round is still live — and so the hundredths
+  // run through every digit rather than stepping at the publish rate.
+  const shown = use_precise_time(time_remaining, clock_anchor, is_precise_window(time_remaining));
+
+  const is_low_time = shown <= 30 && shown > 0;
+  const is_zero = shown <= 0;
+  // The clock keeps sub-second precision; the operator adjusts in whole seconds,
+  // working from the value currently on the display.
+  const whole_seconds = Math.floor(Math.max(0, shown));
+  const show_hundredths = is_precise_window(shown) && shown > 0;
+  const parts = format_time_precise(shown);
 
   return (
     <div className="flex flex-col items-center gap-3 w-full">
@@ -87,9 +102,16 @@ export default function TimerControl({
             ${is_zero ? 'bg-gray-900' : is_low_time ? 'bg-kumite-red-600 animate-pulse' : 'bg-gray-900'}
             ${!is_running ? 'hover:bg-gray-800' : ''}`}
         >
-          <div className={`text-4xl font-score font-bold tracking-wider
+          <div className={`text-4xl font-score font-bold flex items-baseline justify-center
             ${is_zero ? 'text-gray-400' : 'text-white'}`}>
-            {format_time(time_remaining)}
+            <span>
+              <FixedDigits text={show_hundredths ? parts.mm_ss : format_time(shown)} />
+            </span>
+            {show_hundredths && (
+              <span className="opacity-80" style={{ fontSize: '0.6em' }}>
+                <FixedDigits text={`.${parts.hundredths}`} />
+              </span>
+            )}
           </div>
           {match_status === 'active' && (
             <div className={`text-xs mt-1 uppercase tracking-widest font-semibold
@@ -97,32 +119,37 @@ export default function TimerControl({
               {is_zero ? 'Time Up' : is_running ? 'Running' : 'Paused'}
             </div>
           )}
+          {match_status === 'hantei' && (
+            <div className="text-xs mt-1 uppercase tracking-widest font-semibold text-yellow-400 animate-pulse">
+              Hantei
+            </div>
+          )}
         </button>
       )}
 
       {/* Time Adjust Buttons */}
-      {!is_running && match_status !== 'idle' && (
+      {!is_running && match_status === 'active' && (
         <div className="flex gap-2">
           <button
-            onClick={() => on_time_change(Math.max(0, time_remaining - 10))}
+            onClick={() => on_time_change(Math.max(0, whole_seconds - 10))}
             className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold text-sm transition-all flex items-center justify-center"
           >
             -10
           </button>
           <button
-            onClick={() => on_time_change(Math.max(0, time_remaining - 1))}
+            onClick={() => on_time_change(Math.max(0, whole_seconds - 1))}
             className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold text-sm transition-all flex items-center justify-center"
           >
             -1
           </button>
           <button
-            onClick={() => on_time_change(time_remaining + 1)}
+            onClick={() => on_time_change(whole_seconds + 1)}
             className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold text-sm transition-all flex items-center justify-center"
           >
             +1
           </button>
           <button
-            onClick={() => on_time_change(time_remaining + 10)}
+            onClick={() => on_time_change(whole_seconds + 10)}
             className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold text-sm transition-all flex items-center justify-center"
           >
             +10

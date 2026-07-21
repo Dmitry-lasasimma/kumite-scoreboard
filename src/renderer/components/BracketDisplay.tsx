@@ -1,6 +1,7 @@
 import React from 'react';
 import { Match } from '../../types/match';
 import { Competitor } from '../../types/competitor';
+import { get_semifinal_losers } from '../../services/bracket_generator';
 
 type SlotSide = 'blue' | 'red';
 interface SlotRef { match_id: string; side: SlotSide; }
@@ -300,6 +301,11 @@ export default function BracketDisplay({
   const has_third = !!third_place;
   const semifinal_round = total_rounds > 1 ? total_rounds - 1 : 0;
 
+  // With two bronze medals there is no 3rd-place match to draw, so the beaten
+  // semi-finalists are listed in its place once they are known.
+  const bronze_ids = has_third ? [] : get_semifinal_losers(matches);
+  const has_bronze_panel = !has_third && total_rounds > 1;
+
   const card_props = { edit_mode, on_slot_drop, on_score_change, on_pick_winner, on_open_picker };
 
   // Build round data
@@ -338,10 +344,65 @@ export default function BracketDisplay({
         const next_rd = rounds_data.find(r => r.round === rd.round + 1);
         const next_centers = next_rd ? (all_centers.get(next_rd.round) || []) : [];
         // Skip connector after semifinal if 3rd place card goes in between
-        const show_connector_after = !is_final && next_rd && next_centers.length > 0 && !(is_last_pre_final && has_third);
+        const show_connector_after = !is_final && next_rd && next_centers.length > 0
+          && !(is_last_pre_final && (has_third || has_bronze_panel));
 
         return (
           <React.Fragment key={rd.round}>
+            {/* Joint bronze panel, in place of the 3rd-place match */}
+            {is_final && has_bronze_panel && (
+              <>
+                {semifinal_round > 0 && (() => {
+                  const semi_centers = all_centers.get(semifinal_round) || [];
+                  const final_centers = all_centers.get(total_rounds) || [];
+                  if (semi_centers.length > 0 && final_centers.length > 0) {
+                    return (
+                      <div className="shrink-0" style={{ width: LINE_W, paddingTop: HEADER_H, minHeight: total_height }}>
+                        <ConnectorLines
+                          prev_centers={semi_centers}
+                          next_centers={final_centers}
+                          height={total_height}
+                        />
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
+                <div className="shrink-0 flex flex-col items-center justify-center" style={{ width: CARD_W + 24, minHeight: total_height }}>
+                  <div className="text-xs font-semibold text-yellow-600 uppercase tracking-wider mb-3 text-center">
+                    3rd Place ×2
+                  </div>
+                  <div className="w-full rounded-2xl border-2 border-yellow-200 bg-yellow-50/60 p-3">
+                    {bronze_ids.length === 0 ? (
+                      <div className="text-xs text-gray-400 text-center py-4">
+                        Both beaten semi-finalists take bronze
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {bronze_ids.map(id => {
+                          const c = get_competitor(id);
+                          return (
+                            <div key={id} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-white border border-yellow-200">
+                              <span className="text-sm">🥉</span>
+                              <div className="min-w-0">
+                                <div className="text-sm font-semibold text-gray-900 truncate">
+                                  {get_name(id, get_competitor)}
+                                </div>
+                                {c?.club && <div className="text-[11px] text-gray-400 truncate">{c.club}</div>}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="shrink-0" style={{ width: 16 }} />
+              </>
+            )}
+
             {/* Inject 3rd place BEFORE the final column */}
             {is_final && has_third && third_place && (
               <>

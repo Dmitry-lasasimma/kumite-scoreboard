@@ -4,13 +4,26 @@ import { calculate_total, check_auto_win } from '../../services/scorer_service';
 import ScoreButton from '../components/ScoreButton';
 import TimerControl from '../components/TimerControl';
 import PenaltyPanel from '../components/PenaltyPanel';
+import HanteiPanel from '../components/HanteiPanel';
+import NotificationStack from '../components/NotificationStack';
+
+const WIN_REASON_LABELS: Record<string, string> = {
+  points: 'on points',
+  senshu: 'by Senshu',
+  advanced_technique: 'by most advanced technique',
+  hantei: 'by Hantei — judges’ decision',
+  disqualification: 'by disqualification',
+  none: '',
+};
 
 export default function MatchScoring() {
   const {
-    score, is_running, match_status, winner,
-    blue_penalties, red_penalties, score_flash,
+    score, is_running, clock_anchor, match_status, winner, win_reason,
+    blue_penalties, red_penalties, score_flash, scoring_locked,
+    notifications, dismiss_notification,
     handle_score, handle_remove_score, handle_toggle_senshu,
     handle_add_penalty, handle_remove_penalty,
+    handle_add_flag, handle_remove_flag, handle_clear_flags, handle_confirm_hantei,
     handle_hajime, handle_stop, handle_resume, handle_reset, handle_end_match,
     handle_time_change,
     current_match, get_competitor, set_page,
@@ -57,6 +70,9 @@ export default function MatchScoring() {
 
   return (
     <div className="h-full flex flex-col p-4 gap-3">
+      {/* Senshu reminders, stacked on the right */}
+      <NotificationStack notifications={notifications} on_dismiss={dismiss_notification} />
+
       {/* Operator top bar: match context + bracket navigation */}
       <div className="flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3 min-w-0">
@@ -72,12 +88,26 @@ export default function MatchScoring() {
             {is_quick ? 'Quick Match' : round_label}
           </div>
         </div>
-        {!is_quick && match_status === 'active' && (
-          <span className="px-3 py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-semibold uppercase tracking-wider animate-pulse">
-            Match live — timer keeps running
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {scoring_locked && (
+            <span className="px-3 py-1.5 rounded-lg bg-yellow-50 text-yellow-700 text-xs font-semibold uppercase tracking-wider">
+              🔒 Yame to score
+            </span>
+          )}
+          {!is_quick && match_status === 'active' && (
+            <span className="px-3 py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-semibold uppercase tracking-wider animate-pulse">
+              Match live — timer keeps running
+            </span>
+          )}
+        </div>
       </div>
+
+      {/* Hantei Banner */}
+      {match_status === 'hantei' && (
+        <div className="rounded-2xl p-3 text-center font-score text-lg bg-yellow-400 text-gray-900 shadow-xl">
+          Scores level after every tie-break — record the judges’ flags below
+        </div>
+      )}
 
       {/* Winner Banner */}
       {match_status === 'finished' && (
@@ -86,7 +116,14 @@ export default function MatchScoring() {
           winner === 'red' ? 'bg-kumite-red-600' :
           'bg-gray-800'
         }`}>
-          <span>{winner ? `${winner === 'blue' ? blue_name : red_name} WINS!` : 'DRAW - ZENSHU DECIDES'}</span>
+          <span>
+            {winner ? `${winner === 'blue' ? blue_name : red_name} WINS!` : 'DRAW'}
+            {winner && WIN_REASON_LABELS[win_reason] && (
+              <span className="ml-2 text-sm font-normal opacity-80">
+                {WIN_REASON_LABELS[win_reason]}
+              </span>
+            )}
+          </span>
           <button onClick={() => set_page(back_page)}
             className="px-4 py-1.5 rounded-lg bg-white/20 text-white text-sm font-semibold hover:bg-white/30 transition-all">
             {is_quick ? 'New Quick Match' : 'Back to Bracket'}
@@ -95,7 +132,10 @@ export default function MatchScoring() {
       )}
 
       {/* Main Scoring Area */}
-      <div className="flex-1 grid grid-cols-[1fr_200px_1fr] gap-3 min-h-0">
+      {/* The centre column widens for the Hantei panel, which carries two sets
+          of controls plus competitor names. */}
+      <div className={`flex-1 grid gap-3 min-h-0 transition-[grid-template-columns] duration-200
+        ${match_status === 'hantei' ? 'grid-cols-[1fr_260px_1fr]' : 'grid-cols-[1fr_200px_1fr]'}`}>
         {/* Blue Side */}
         <div className={`card p-4 flex flex-col gap-3 border-t-4 border-kumite-blue-500 ${
           score_flash === 'blue' ? 'animate-flash' : ''
@@ -123,24 +163,37 @@ export default function MatchScoring() {
           </div>
 
           <div className="grid grid-cols-3 gap-2 flex-1">
-            <ScoreButton label="YUKO" value={score.blue_yuko} points="+1" side="blue"
+            <ScoreButton label="YUKO" value={score.blue_yuko} points="+1" side="blue" disabled={scoring_locked}
               on_add={() => handle_score('blue', 'yuko')} on_remove={() => handle_remove_score('blue', 'yuko')} />
-            <ScoreButton label="WAZA-ARI" value={score.blue_waza_ari} points="+2" side="blue"
+            <ScoreButton label="WAZA-ARI" value={score.blue_waza_ari} points="+2" side="blue" disabled={scoring_locked}
               on_add={() => handle_score('blue', 'waza_ari')} on_remove={() => handle_remove_score('blue', 'waza_ari')} />
-            <ScoreButton label="IPPON" value={score.blue_ippon} points="+3" side="blue"
+            <ScoreButton label="IPPON" value={score.blue_ippon} points="+3" side="blue" disabled={scoring_locked}
               on_add={() => handle_score('blue', 'ippon')} on_remove={() => handle_remove_score('blue', 'ippon')} />
           </div>
 
-          <PenaltyPanel side="blue" penalties={blue_penalties}
+          <PenaltyPanel side="blue" penalties={blue_penalties} disabled={scoring_locked}
             on_add={level => handle_add_penalty('blue', level)}
             on_remove={() => handle_remove_penalty('blue')} />
         </div>
 
         {/* Center - Timer & Controls */}
         <div className="flex flex-col items-center justify-center gap-3">
+          {match_status === 'hantei' && (
+            <HanteiPanel
+              blue_name={blue_name}
+              red_name={red_name}
+              blue_flags={score.blue_flags || 0}
+              red_flags={score.red_flags || 0}
+              on_add_flag={handle_add_flag}
+              on_remove_flag={handle_remove_flag}
+              on_clear={handle_clear_flags}
+              on_confirm={handle_confirm_hantei}
+            />
+          )}
           <TimerControl
             time_remaining={score.time_remaining}
             is_running={is_running}
+            clock_anchor={clock_anchor}
             match_status={match_status}
             on_hajime={handle_hajime}
             on_stop={handle_stop}
@@ -179,15 +232,15 @@ export default function MatchScoring() {
           </div>
 
           <div className="grid grid-cols-3 gap-2 flex-1">
-            <ScoreButton label="YUKO" value={score.red_yuko} points="+1" side="red"
+            <ScoreButton label="YUKO" value={score.red_yuko} points="+1" side="red" disabled={scoring_locked}
               on_add={() => handle_score('red', 'yuko')} on_remove={() => handle_remove_score('red', 'yuko')} />
-            <ScoreButton label="WAZA-ARI" value={score.red_waza_ari} points="+2" side="red"
+            <ScoreButton label="WAZA-ARI" value={score.red_waza_ari} points="+2" side="red" disabled={scoring_locked}
               on_add={() => handle_score('red', 'waza_ari')} on_remove={() => handle_remove_score('red', 'waza_ari')} />
-            <ScoreButton label="IPPON" value={score.red_ippon} points="+3" side="red"
+            <ScoreButton label="IPPON" value={score.red_ippon} points="+3" side="red" disabled={scoring_locked}
               on_add={() => handle_score('red', 'ippon')} on_remove={() => handle_remove_score('red', 'ippon')} />
           </div>
 
-          <PenaltyPanel side="red" penalties={red_penalties}
+          <PenaltyPanel side="red" penalties={red_penalties} disabled={scoring_locked}
             on_add={level => handle_add_penalty('red', level)}
             on_remove={() => handle_remove_penalty('red')} />
         </div>

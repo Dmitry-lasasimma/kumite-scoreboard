@@ -1,12 +1,10 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { Competitor, WeightCategory, AgeCategory } from '../../types/competitor';
+import { Competitor } from '../../types/competitor';
 import { TournamentCategory } from '../../types/tournament';
 import { validate_competitor } from '../../utils/validators';
 import { useAppContext } from '../context/AppContext';
+import ImportCompetitorsDialog from '../components/ImportCompetitorsDialog';
 import { v4 as uuid } from 'uuid';
-
-const WEIGHT_OPTIONS: WeightCategory[] = ['Light', 'Medium', 'Heavy'];
-const AGE_OPTIONS: AgeCategory[] = ['U12', 'U16', 'U21', 'Senior'];
 
 export default function CompetitorRegistration() {
   const {
@@ -19,20 +17,25 @@ export default function CompetitorRegistration() {
   const [first_name, set_first_name] = useState('');
   const [last_name, set_last_name] = useState('');
   const [club, set_club] = useState('');
-  const [weight, set_weight] = useState<WeightCategory | ''>('');
-  const [age, set_age] = useState<AgeCategory | ''>('');
   const [category_id, set_category_id] = useState<string>('');
   const [selected_tournament, set_selected_tournament] = useState<string>(tournaments[0]?.id || '');
   const [errors, set_errors] = useState<string[]>([]);
   const [editing_id, set_editing_id] = useState<string | null>(null);
   const [search, set_search] = useState('');
   const [filter_category, set_filter_category] = useState<string>('all');
+  const [show_import, set_show_import] = useState(false);
+
+  /** The tournament new competitors are being added to. */
+  const import_tournament = useMemo(
+    () => tournaments.find(t => t.id === selected_tournament),
+    [selected_tournament, tournaments],
+  );
 
   /** All categories from the selected tournament */
-  const available_categories: TournamentCategory[] = useMemo(() => {
-    const t = tournaments.find(t => t.id === selected_tournament);
-    return t?.categories || [];
-  }, [selected_tournament, tournaments]);
+  const available_categories: TournamentCategory[] = useMemo(
+    () => import_tournament?.categories || [],
+    [import_tournament],
+  );
 
   /** All categories across all tournaments for the filter */
   const all_categories: TournamentCategory[] = useMemo(() => {
@@ -53,30 +56,24 @@ export default function CompetitorRegistration() {
     set_first_name('');
     set_last_name('');
     set_club('');
-    set_weight('');
-    set_age('');
     set_category_id('');
     set_errors([]);
     set_editing_id(null);
   }, []);
 
   const handle_submit = useCallback(() => {
-    const data: Partial<Competitor> = { first_name, last_name, club };
+    const data: Partial<Competitor> = { first_name, last_name, club, category_id: category_id || null };
     const validation_errors = validate_competitor(data);
     if (validation_errors.length > 0) { set_errors(validation_errors); return; }
 
     if (editing_id) {
       update_competitor({
         id: editing_id, first_name, last_name, club,
-        weight_category: weight || null,
-        age_category: age || null,
         category_id: category_id || null,
       });
     } else {
       const new_competitor: Competitor = {
         id: uuid(), first_name, last_name, club,
-        weight_category: weight || null,
-        age_category: age || null,
         category_id: category_id || null,
       };
       add_competitor(new_competitor);
@@ -85,15 +82,13 @@ export default function CompetitorRegistration() {
       }
     }
     reset_form();
-  }, [first_name, last_name, club, weight, age, category_id, editing_id, selected_tournament,
+  }, [first_name, last_name, club, category_id, editing_id, selected_tournament,
       add_competitor, update_competitor, add_competitor_to_tournament, reset_form]);
 
   const handle_edit = useCallback((c: Competitor) => {
     set_first_name(c.first_name);
     set_last_name(c.last_name);
     set_club(c.club);
-    set_weight(c.weight_category || '');
-    set_age(c.age_category || '');
     set_category_id(c.category_id || '');
     set_editing_id(c.id);
   }, []);
@@ -156,7 +151,6 @@ export default function CompetitorRegistration() {
                   onChange={e => { set_selected_tournament(e.target.value); set_category_id(''); }}
                   className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-gray-900 focus:ring-1 focus:ring-gray-900 outline-none transition-all text-sm bg-white"
                 >
-                  <option value="">No tournament</option>
                   {tournaments.map(t => (
                     <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
@@ -174,25 +168,41 @@ export default function CompetitorRegistration() {
             )}
 
             {/* Category selector — show every category so it can be assigned/updated any time */}
-            {(editing_id ? all_categories : available_categories).length > 0 && (
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Category</label>
-                <div className="flex gap-2 flex-wrap">
-                  {(editing_id ? all_categories : available_categories).map(cat => (
-                    <button
-                      key={cat.id}
-                      onClick={() => set_category_id(category_id === cat.id ? '' : cat.id)}
-                      className={`px-3 py-2 rounded-xl text-sm font-semibold transition-all
-                        ${category_id === cat.id
-                          ? 'bg-purple-600 text-white shadow-md'
-                          : 'bg-purple-50 text-purple-700 hover:bg-purple-100'}`}
-                    >
-                      {cat.name}
-                    </button>
-                  ))}
+            {(() => {
+              const options = editing_id ? all_categories : available_categories;
+              return (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                    Category <span className="text-kumite-red-500">*</span>
+                  </label>
+                  {options.length === 0 ? (
+                    <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-xl text-yellow-700 text-sm">
+                      {selected_tournament
+                        ? 'This tournament has no categories yet. '
+                        : 'Select a tournament to choose a category. '}
+                      <button onClick={() => set_page('tournament_setup')} className="underline font-semibold">
+                        Manage categories
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-2 flex-wrap">
+                      {options.map(cat => (
+                        <button
+                          key={cat.id}
+                          onClick={() => set_category_id(category_id === cat.id ? '' : cat.id)}
+                          className={`px-3 py-2 rounded-xl text-sm font-semibold transition-all
+                            ${category_id === cat.id
+                              ? 'bg-purple-600 text-white shadow-md'
+                              : 'bg-purple-50 text-purple-700 hover:bg-purple-100'}`}
+                        >
+                          {cat.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -214,30 +224,6 @@ export default function CompetitorRegistration() {
                 className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:border-gray-900 focus:ring-1 focus:ring-gray-900 outline-none transition-all text-sm"
                 placeholder="Club name" />
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Weight Category</label>
-              <div className="flex gap-2">
-                {WEIGHT_OPTIONS.map(w => (
-                  <button key={w} onClick={() => set_weight(weight === w ? '' : w)}
-                    className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all
-                      ${weight === w ? 'bg-gray-900 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                    {w}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Age Category</label>
-              <div className="flex gap-2">
-                {AGE_OPTIONS.map(a => (
-                  <button key={a} onClick={() => set_age(age === a ? '' : a)}
-                    className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all
-                      ${age === a ? 'bg-gray-900 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                    {a}
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
 
           <div className="flex gap-2 mt-6">
@@ -251,8 +237,33 @@ export default function CompetitorRegistration() {
               </button>
             )}
           </div>
+
+          {/* Bulk entry */}
+          {!editing_id && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <button
+                onClick={() => set_show_import(true)}
+                disabled={!import_tournament}
+                title={import_tournament ? undefined : 'Select a tournament to import into'}
+                className="w-full py-2.5 rounded-xl bg-white border border-gray-200 text-gray-700 font-semibold text-sm
+                           hover:border-gray-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                ⬆ Import from Excel / CSV
+              </button>
+              <div className="text-xs text-gray-400 mt-2 text-center">
+                Add many competitors at once from a spreadsheet
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {show_import && import_tournament && (
+        <ImportCompetitorsDialog
+          tournament={import_tournament}
+          on_close={() => set_show_import(false)}
+        />
+      )}
 
       {/* List */}
       <div className="flex-1 flex flex-col min-w-0">
@@ -318,11 +329,11 @@ export default function CompetitorRegistration() {
                         {get_category_name(c.category_id)}
                       </span>
                     )}
-                    {c.weight_category && (
-                      <span className="px-2 py-0.5 rounded-lg bg-kumite-blue-50 text-kumite-blue-700 text-xs font-semibold">{c.weight_category}</span>
-                    )}
-                    {c.age_category && (
-                      <span className="px-2 py-0.5 rounded-lg bg-kumite-red-50 text-kumite-red-700 text-xs font-semibold">{c.age_category}</span>
+                    {!c.category_id && (
+                      <span className="px-2 py-0.5 rounded-lg bg-yellow-50 text-yellow-700 text-xs font-semibold"
+                            title="Assign a category so this competitor can be drawn into a bracket">
+                        No category
+                      </span>
                     )}
                     {/* Tournament badges */}
                     {tournaments.map(t => {

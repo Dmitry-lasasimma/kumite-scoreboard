@@ -7,9 +7,13 @@ interface PenaltyPanelProps {
   penalties: PenaltyLevel[];
   on_add: (level: PenaltyLevel) => void;
   on_remove: () => void;
+  /** Disabled while the clock is running, to prevent accidental penalties. */
+  disabled?: boolean;
 }
 
-export default function PenaltyPanel({ side, penalties, on_add, on_remove }: PenaltyPanelProps) {
+export default function PenaltyPanel({
+  side, penalties, on_add, on_remove, disabled = false,
+}: PenaltyPanelProps) {
   const penalty_counts = PENALTY_LEVELS.reduce((acc, level) => {
     acc[level] = penalties.filter(p => p === level).length;
     return acc;
@@ -22,7 +26,9 @@ export default function PenaltyPanel({ side, penalties, on_add, on_remove }: Pen
         {penalties.length > 0 && (
           <button
             onClick={on_remove}
+            disabled={disabled}
             className={`text-xs px-2 py-0.5 rounded-md font-semibold transition-all
+              disabled:opacity-30 disabled:cursor-not-allowed
               ${side === 'blue' ? 'text-kumite-blue-500 hover:bg-kumite-blue-50' : 'text-kumite-red-500 hover:bg-kumite-red-50'}`}
           >
             Undo
@@ -36,7 +42,10 @@ export default function PenaltyPanel({ side, penalties, on_add, on_remove }: Pen
             <button
               key={level}
               onClick={() => on_add(level)}
+              disabled={disabled}
+              title={disabled ? 'Stop the clock (Yame) before giving a penalty' : undefined}
               className={`btn-penalty flex-1 relative
+                ${disabled ? 'opacity-40 cursor-not-allowed grayscale' : ''}
                 ${side === 'blue'
                   ? is_active ? 'btn-penalty-active-blue' : 'btn-penalty-blue'
                   : is_active ? 'btn-penalty-active-red' : 'btn-penalty-red'

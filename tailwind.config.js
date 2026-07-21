@@ -36,8 +36,13 @@ module.exports = {
       animation: {
         'pulse-score': 'pulse-score 0.5s ease-in-out',
         'flash': 'flash 0.3s ease-in-out',
+        'slide-in': 'slide-in 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
       },
       keyframes: {
+        'slide-in': {
+          '0%': { opacity: '0', transform: 'translateX(1.5rem)' },
+          '100%': { opacity: '1', transform: 'translateX(0)' },
+        },
         'pulse-score': {
           '0%, 100%': { transform: 'scale(1)' },
           '50%': { transform: 'scale(1.15)' },

@@ -258,8 +258,8 @@ export default function BracketDetailView() {
         <span className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 text-xs font-semibold">
           {comp_count} competitors
         </span>
-        <span className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-600 text-xs font-semibold capitalize">
-          {tournament.pairing_constraint.replace('_', ' ')} pairing
+        <span className="px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 text-xs font-semibold">
+          {(tournament.categories || []).find(c => c.id === selected_category_id)?.name ?? 'No category'}
         </span>
         <span className="px-3 py-1.5 rounded-lg bg-yellow-50 text-yellow-700 text-xs font-semibold">
           {bracket_matches.filter(m => m.status === 'pending').length} pending

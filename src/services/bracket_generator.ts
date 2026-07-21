@@ -1,6 +1,8 @@
 import { Competitor } from '../types/competitor';
 import { Match } from '../types/match';
-import { PairingConstraint } from '../types/tournament';
+import {
+  ThirdPlaceMode, DEFAULT_THIRD_PLACE_MODE, Tournament, TournamentCategory, FALLBACK_CATEGORY_NAME,
+} from '../types/tournament';
 import { v4 as uuid } from 'uuid';
 
 /* ───────────────────── helpers ───────────────────── */
@@ -211,34 +213,21 @@ function cascade_auto_complete(matches: Match[], tid: string | null, cid: string
 /* ───────────────── public API ───────────────── */
 
 /**
- * Generate a complete single-elimination bracket.
+ * Generate a complete single-elimination bracket for one category.
  *
- * Creates Round 1 matches (with BYE auto-completes), placeholder
- * matches for subsequent rounds, a 3rd-place match (3+ competitors),
- * and then cascades auto-completion so that BYE advantages propagate
- * correctly through every round.
+ * Every competitor passed in is treated as eligible to face any other — the
+ * category IS the pairing rule, so grouping happens before this is called.
+ * Creates Round 1 matches (with BYE auto-completes), placeholder matches for
+ * subsequent rounds, a 3rd-place match (3+ competitors, `playoff` mode), and
+ * then cascades auto-completion so BYE advantages propagate through every round.
  */
 export function generate_bracket(
   competitors: Competitor[],
   tournament_id: string,
-  constraint: PairingConstraint,
   category_id: string | null = null,
+  third_place_mode: ThirdPlaceMode = DEFAULT_THIRD_PLACE_MODE,
 ): Match[] {
-  let pool = [...competitors];
-
-  // Sort by constraint before shuffling within groups
-  if (constraint === 'same_weight') {
-    pool.sort((a, b) => (a.weight_category || '').localeCompare(b.weight_category || ''));
-  } else if (constraint === 'same_age') {
-    pool.sort((a, b) => (a.age_category || '').localeCompare(b.age_category || ''));
-  } else if (constraint === 'both') {
-    pool.sort((a, b) => {
-      const w = (a.weight_category || '').localeCompare(b.weight_category || '');
-      return w !== 0 ? w : (a.age_category || '').localeCompare(b.age_category || '');
-    });
-  }
-
-  pool = shuffle(pool);
+  const pool = shuffle([...competitors]);
 
   // Special case: exactly 2 competitors → single match, no 3rd place
   if (pool.length === 2) {
@@ -310,7 +299,9 @@ export function generate_bracket(
   }
 
   // ── 3rd-place match (3+ competitors) ──
-  if (pool.length >= 3) {
+  // Only in `playoff` mode. With two bronze medals the beaten semi-finalists
+  // both place 3rd, so there is nothing to play off.
+  if (pool.length >= 3 && third_place_mode === 'playoff') {
     matches.push({
       id: uuid(), tournament_id, category_id,
       bracket_round: -1,
@@ -518,6 +509,176 @@ export function normalize_brackets(matches: Match[]): Match[] {
     cascade_auto_complete(updated, tid, cid);
   }
   return updated;
+}
+
+/* ───────────────── category migration ───────────────── */
+
+export interface AppData {
+  tournaments: Tournament[];
+  competitors: Competitor[];
+  tournament_competitors: Record<string, string[]>;
+  matches: Match[];
+}
+
+/**
+ * Bring saved data up to the rule that every draw belongs to a category.
+ *
+ * Tournaments used to be able to run without categories, pairing competitors by
+ * weight/age instead. Anything saved that way is folded into one automatically
+ * created category so nothing is lost and old brackets stay playable:
+ *   - a tournament with no categories gains a "General" one
+ *   - its competitors that have no category (or point at a deleted one) join it
+ *   - its matches drawn without a category (`category_id === null`) move into it
+ *
+ * Data that already uses categories is returned untouched. Safe to run on every
+ * load — it is idempotent.
+ */
+export function migrate_to_categories(data: AppData): AppData {
+  const tournaments = data.tournaments.map(t => ({ ...t }));
+  const competitors = data.competitors.map(c => ({ ...c }));
+  const matches = data.matches.map(m => ({ ...m }));
+
+  // Tournaments holding a bracket that was drawn without a category. These need
+  // somewhere to put it even if they already have categories of their own,
+  // otherwise the bracket becomes unreachable in the UI.
+  const has_orphan_bracket = new Set<string>();
+  for (const m of matches) {
+    if (m.tournament_id !== null && m.category_id === null) has_orphan_bracket.add(m.tournament_id);
+  }
+
+  const needs_fallback = (t: Tournament): boolean =>
+    !t.categories || t.categories.length === 0 || has_orphan_bracket.has(t.id);
+
+  if (!tournaments.some(needs_fallback)) {
+    return data; // already conforms — return the input untouched
+  }
+
+  /** tournament id → id of the category created for it. */
+  const fallback_for: Record<string, string> = {};
+  /** Tournaments that had no categories at all before this ran. */
+  const was_empty = new Set<string>();
+
+  for (const t of tournaments) {
+    if (!needs_fallback(t)) continue;
+    const existing = t.categories || [];
+    if (existing.length === 0) was_empty.add(t.id);
+    const category: TournamentCategory = { id: uuid(), name: FALLBACK_CATEGORY_NAME };
+    t.categories = [...existing, category];
+    fallback_for[t.id] = category.id;
+  }
+
+  // Move category-less matches into their tournament's fallback category.
+  for (const m of matches) {
+    if (m.tournament_id === null) continue;   // quick matches have no bracket
+    if (m.category_id !== null) continue;
+    const cid = fallback_for[m.tournament_id];
+    if (cid) m.category_id = cid;
+  }
+
+  // Every category id that now exists, so competitors pointing at a deleted one
+  // are treated as uncategorised.
+  const known_category_ids = new Set<string>();
+  for (const t of tournaments) {
+    for (const c of t.categories || []) known_category_ids.add(c.id);
+  }
+
+  // Give uncategorised competitors the fallback category of a tournament they
+  // belong to — but only where that tournament had no categories at all. If it
+  // already had some, there is no way to know which one they meant, so they are
+  // left for the operator to assign.
+  for (const c of competitors) {
+    if (c.category_id && known_category_ids.has(c.category_id)) continue;
+    const tournament_id = Object.keys(data.tournament_competitors)
+      .find(tid => was_empty.has(tid) && (data.tournament_competitors[tid] || []).includes(c.id));
+    c.category_id = tournament_id ? fallback_for[tournament_id] : null;
+  }
+
+  return { ...data, tournaments, competitors, matches };
+}
+
+/* ───────────────── standings ───────────────── */
+
+export interface BracketStandings {
+  first: string | null;
+  second: string | null;
+  /** One medallist in `playoff` mode, up to two in `dual` mode. */
+  third: string[];
+  /** Only exists in `playoff` mode — the loser of the 3rd-place match. */
+  fourth: string | null;
+  mode: ThirdPlaceMode;
+}
+
+const is_real = (id: string | null | undefined): id is string =>
+  !!id && id !== 'TBD' && id !== 'BYE';
+
+/**
+ * Work out the final standings for one bracket.
+ *
+ * The bronze format is read from the bracket itself: a 3rd-place match means
+ * `playoff`, its absence means `dual`. Deriving it here rather than from the
+ * tournament record keeps standings correct for brackets that were drawn under
+ * a different setting and never regenerated.
+ *
+ * @param matches Matches for a single tournament + category.
+ */
+export function get_standings(matches: Match[]): BracketStandings {
+  const positive = matches.filter(m => m.bracket_round > 0);
+  const total_rounds = positive.length > 0
+    ? Math.max(...positive.map(m => m.bracket_round))
+    : 0;
+
+  const final_match = positive.find(
+    m => m.bracket_round === total_rounds && m.status === 'completed',
+  );
+  const third_match = matches.find(m => m.bracket_round === -1);
+  const mode: ThirdPlaceMode = third_match ? 'playoff' : 'dual';
+
+  let first: string | null = null;
+  let second: string | null = null;
+  if (final_match?.winner_id) {
+    first = final_match.winner_id;
+    const runner_up = final_match.blue_competitor_id === final_match.winner_id
+      ? final_match.red_competitor_id
+      : final_match.blue_competitor_id;
+    second = is_real(runner_up) ? runner_up : null;
+  }
+
+  const third: string[] = [];
+  let fourth: string | null = null;
+
+  if (mode === 'playoff') {
+    if (third_match?.winner_id) {
+      third.push(third_match.winner_id);
+      const loser = third_match.blue_competitor_id === third_match.winner_id
+        ? third_match.red_competitor_id
+        : third_match.blue_competitor_id;
+      if (is_real(loser)) fourth = loser;
+    }
+  } else {
+    // Both beaten semi-finalists take bronze. A semifinal won on a BYE has no
+    // loser to award, which is correct for a three-competitor draw.
+    for (const id of get_semifinal_losers(matches)) third.push(id);
+  }
+
+  return { first, second, third, fourth, mode };
+}
+
+/**
+ * Competitors beaten in the semi-finals, in bracket order.
+ * Excludes BYEs and unplayed matches.
+ */
+export function get_semifinal_losers(matches: Match[]): string[] {
+  const positive = matches.filter(m => m.bracket_round > 0);
+  if (positive.length === 0) return [];
+  const total_rounds = Math.max(...positive.map(m => m.bracket_round));
+  const semifinal_round = total_rounds - 1;
+  if (semifinal_round < 1) return [];
+
+  return positive
+    .filter(m => m.bracket_round === semifinal_round && m.status === 'completed' && m.winner_id)
+    .sort((a, b) => a.match_number - b.match_number)
+    .map(m => (m.blue_competitor_id === m.winner_id ? m.red_competitor_id : m.blue_competitor_id))
+    .filter(is_real);
 }
 
 /**

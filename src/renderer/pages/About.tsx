@@ -16,7 +16,7 @@ const FEATURES: Feature[] = [
   },
   {
     title: 'Tournament Brackets',
-    desc: 'Generate single-elimination brackets with configurable pairing constraints, automatic BYE handling, and a dedicated 3rd-place match.',
+    desc: 'Generate single-elimination brackets per category, with automatic BYE handling and a choice of one or two 3rd places.',
   },
   {
     title: 'Live Match Scoring',

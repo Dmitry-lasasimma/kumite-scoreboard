@@ -5,7 +5,7 @@ import { TournamentCategory } from '../../types/tournament';
 export default function BracketView() {
   const {
     tournaments, matches, competitors, tournament_competitors,
-    generate_tournament_bracket, generate_category_bracket,
+    generate_category_bracket,
     get_competitor, set_page,
     selected_tournament_id, set_selected_tournament_id,
     set_selected_category_id,
@@ -21,26 +21,26 @@ export default function BracketView() {
   const has_categories = tournament?.categories && tournament.categories.length > 0;
   const categories: TournamentCategory[] = tournament?.categories || [];
 
-  /** Group competitors by category */
+  /**
+   * Group competitors by category. Every bracket belongs to a category, so the
+   * "Unassigned" group is shown only so those competitors can be spotted and
+   * fixed — it can never be drawn.
+   */
   const grouped = useMemo(() => {
     const groups: { category_id: string | null; category_name: string; comps: typeof competitors }[] = [];
 
-    if (has_categories) {
-      for (const cat of categories) {
-        const cat_comps = all_comps.filter(c => c.category_id === cat.id);
-        groups.push({ category_id: cat.id, category_name: cat.name, comps: cat_comps });
-      }
-      // Unassigned competitors
-      const unassigned = all_comps.filter(c => !c.category_id || !categories.some(cat => cat.id === c.category_id));
-      if (unassigned.length > 0) {
-        groups.push({ category_id: null, category_name: 'Unassigned', comps: unassigned });
-      }
-    } else {
-      groups.push({ category_id: null, category_name: 'All Competitors', comps: all_comps });
+    for (const cat of categories) {
+      const cat_comps = all_comps.filter(c => c.category_id === cat.id);
+      groups.push({ category_id: cat.id, category_name: cat.name, comps: cat_comps });
+    }
+
+    const unassigned = all_comps.filter(c => !c.category_id || !categories.some(cat => cat.id === c.category_id));
+    if (unassigned.length > 0) {
+      groups.push({ category_id: null, category_name: 'Unassigned', comps: unassigned });
     }
 
     return groups;
-  }, [all_comps, categories, has_categories]);
+  }, [all_comps, categories]);
 
   /** Filter groups */
   const displayed_groups = filter_cat === 'all'
@@ -63,12 +63,8 @@ export default function BracketView() {
   };
 
   const handle_generate = (category_id: string | null) => {
-    if (!selected) return;
-    if (category_id) {
-      generate_category_bracket(selected, category_id);
-    } else {
-      generate_tournament_bracket(selected);
-    }
+    if (!selected || !category_id) return;
+    generate_category_bracket(selected, category_id);
   };
 
   const handle_view_bracket = (category_id: string | null) => {
@@ -110,13 +106,6 @@ export default function BracketView() {
           </select>
         </div>
 
-        {/* Generate all (only when no categories) */}
-        {!has_categories && all_comps.length >= 2 && (
-          <button onClick={() => handle_generate(null)}
-            className="px-5 py-2.5 rounded-xl bg-gray-900 text-white font-semibold text-sm hover:bg-gray-800 transition-all active:scale-[0.98] shadow-lg">
-            {get_category_stats(null).has_bracket ? 'Regenerate Bracket' : 'Generate Bracket'}
-          </button>
-        )}
       </div>
 
       {/* Category filter */}
@@ -183,13 +172,17 @@ export default function BracketView() {
                           View Bracket
                         </button>
                       )}
-                      {can_generate && (
+                      {group.category_id === null ? (
+                        <button onClick={() => set_page('competitors')}
+                          className="px-4 py-2 rounded-xl bg-yellow-50 text-yellow-700 font-semibold text-sm hover:bg-yellow-100 transition-all">
+                          Assign a category
+                        </button>
+                      ) : can_generate ? (
                         <button onClick={() => handle_generate(group.category_id)}
                           className="px-4 py-2 rounded-xl bg-gray-900 text-white font-semibold text-sm hover:bg-gray-800 transition-all active:scale-[0.98]">
                           {stats.has_bracket ? 'Regenerate' : 'Generate Bracket'}
                         </button>
-                      )}
-                      {!can_generate && group.comps.length < 2 && (
+                      ) : (
                         <span className="px-4 py-2 text-xs text-gray-400 font-semibold">Need 2+ competitors</span>
                       )}
                     </div>
@@ -215,11 +208,10 @@ export default function BracketView() {
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            {c.weight_category && (
-                              <span className="px-2 py-0.5 rounded bg-kumite-blue-50 text-kumite-blue-700 text-[10px] font-semibold">{c.weight_category}</span>
-                            )}
-                            {c.age_category && (
-                              <span className="px-2 py-0.5 rounded bg-kumite-red-50 text-kumite-red-700 text-[10px] font-semibold">{c.age_category}</span>
+                            {group.category_id === null && (
+                              <span className="px-2 py-0.5 rounded bg-yellow-50 text-yellow-700 text-[10px] font-semibold">
+                                No category
+                              </span>
                             )}
                           </div>
                         </div>

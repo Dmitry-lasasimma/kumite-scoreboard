@@ -71,6 +71,10 @@ export function create_operator_window(show: boolean = true): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       plugins: true, // enable Chromium's built-in PDF viewer for export previews
+      // Keep the match clock running at full rate even when this window is not
+      // the focused one — Chromium otherwise throttles timers and animation
+      // frames in background windows, which stalls the countdown.
+      backgroundThrottling: false,
     },
   });
 
@@ -101,6 +105,9 @@ export function create_spectator_window(): BrowserWindow {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // The operator window always holds focus, so without this the spectator
+      // board is throttled to a few frames a second and the hundredths crawl.
+      backgroundThrottling: false,
     },
   });
 

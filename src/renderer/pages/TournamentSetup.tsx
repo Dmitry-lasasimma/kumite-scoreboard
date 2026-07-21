@@ -1,22 +1,20 @@
 import React, { useState, useCallback } from 'react';
-import { Tournament, TournamentCategory, PairingConstraint } from '../../types/tournament';
+import { Tournament, TournamentCategory, ThirdPlaceMode, DEFAULT_THIRD_PLACE_MODE } from '../../types/tournament';
 import { useAppContext } from '../context/AppContext';
 import { MATCH_DURATIONS, DEFAULT_DURATION } from '../../utils/constants';
 import { format_time } from '../../utils/validators';
 import { v4 as uuid } from 'uuid';
 
-const CONSTRAINT_OPTIONS: { value: PairingConstraint; label: string; desc: string }[] = [
-  { value: 'open', label: 'Open', desc: 'No constraints — any competitor can face any other' },
-  { value: 'same_weight', label: 'Same Weight', desc: 'Competitors face others in the same weight class' },
-  { value: 'same_age', label: 'Same Age', desc: 'Competitors face others in the same age group' },
-  { value: 'both', label: 'Weight & Age', desc: 'Match by both weight and age category' },
+const THIRD_PLACE_OPTIONS: { value: ThirdPlaceMode; label: string; desc: string }[] = [
+  { value: 'playoff', label: '1 Third Place', desc: 'Beaten semi-finalists play a 3rd-place match — one bronze, one 4th' },
+  { value: 'dual', label: '2 Third Places', desc: 'Both beaten semi-finalists take bronze — no 3rd-place match' },
 ];
 
 export default function TournamentSetup() {
   const { tournaments, add_tournament, update_tournament, delete_tournament, set_page, tournament_competitors } = useAppContext();
   const [name, set_name] = useState('');
-  const [constraint, set_constraint] = useState<PairingConstraint>('open');
   const [duration, set_duration] = useState<number>(DEFAULT_DURATION);
+  const [third_place_mode, set_third_place_mode] = useState<ThirdPlaceMode>(DEFAULT_THIRD_PLACE_MODE);
   const [categories, set_categories] = useState<TournamentCategory[]>([]);
   const [category_input, set_category_input] = useState('');
 
@@ -36,22 +34,25 @@ export default function TournamentSetup() {
     set_categories(prev => prev.filter(c => c.id !== id));
   }, []);
 
+  // A tournament is drawn per category, so it cannot exist without at least one.
+  const can_create = name.trim().length > 0 && categories.length > 0;
+
   const handle_create = useCallback(() => {
-    if (!name.trim()) return;
+    if (!name.trim() || categories.length === 0) return;
     const tournament: Tournament = {
       id: uuid(),
       name: name.trim(),
-      pairing_constraint: constraint,
       categories,
       default_duration: duration,
+      third_place_mode,
       status: 'pending',
     };
     add_tournament(tournament);
     set_name('');
-    set_constraint('open');
     set_duration(DEFAULT_DURATION);
+    set_third_place_mode(DEFAULT_THIRD_PLACE_MODE);
     set_categories([]);
-  }, [name, constraint, duration, categories, add_tournament]);
+  }, [name, duration, third_place_mode, categories, add_tournament]);
 
   /** Add a category to an existing tournament */
   const handle_add_edit_category = useCallback((tid: string) => {
@@ -65,11 +66,16 @@ export default function TournamentSetup() {
     set_edit_cat_input('');
   }, [edit_cat_input, tournaments, update_tournament]);
 
-  /** Remove a category from an existing tournament */
+  /**
+   * Remove a category from an existing tournament. The last one cannot be
+   * removed — a tournament with no category has nothing to draw.
+   */
   const handle_remove_edit_category = useCallback((tid: string, cat_id: string) => {
     const t = tournaments.find(x => x.id === tid);
     if (!t) return;
-    update_tournament({ ...t, categories: (t.categories || []).filter(c => c.id !== cat_id) });
+    const remaining = (t.categories || []).filter(c => c.id !== cat_id);
+    if (remaining.length === 0) return;
+    update_tournament({ ...t, categories: remaining });
   }, [tournaments, update_tournament]);
 
   return (
@@ -92,24 +98,6 @@ export default function TournamentSetup() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Pairing Constraint</label>
-              <div className="space-y-2">
-                {CONSTRAINT_OPTIONS.map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => set_constraint(opt.value)}
-                    className={`w-full p-3 rounded-xl text-left transition-all border-2
-                      ${constraint === opt.value
-                        ? 'border-gray-900 bg-gray-50 shadow-sm'
-                        : 'border-gray-100 hover:border-gray-300'}`}
-                  >
-                    <div className="font-semibold text-sm text-gray-900">{opt.label}</div>
-                    <div className="text-xs text-gray-500 mt-0.5">{opt.desc}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Match Time</label>
               <div className="flex gap-2">
                 {MATCH_DURATIONS.map(d => (
@@ -131,7 +119,31 @@ export default function TournamentSetup() {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Categories (optional)</label>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Third Place</label>
+              <div className="space-y-2">
+                {THIRD_PLACE_OPTIONS.map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => set_third_place_mode(opt.value)}
+                    className={`w-full p-3 rounded-xl text-left transition-all border-2
+                      ${third_place_mode === opt.value
+                        ? 'border-gray-900 bg-gray-50 shadow-sm'
+                        : 'border-gray-100 hover:border-gray-300'}`}
+                  >
+                    <div className="font-semibold text-sm text-gray-900">{opt.label}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">{opt.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+                Categories <span className="text-kumite-red-500">*</span>
+              </label>
+              <div className="text-xs text-gray-400 mb-2">
+                Competitors are drawn against others in the same category. At least one is required.
+              </div>
               <div className="flex gap-2 mb-2">
                 <input
                   value={category_input}
@@ -163,11 +175,18 @@ export default function TournamentSetup() {
 
           <button
             onClick={handle_create}
+            disabled={!can_create}
             className="w-full mt-6 py-2.5 rounded-xl bg-gray-900 text-white font-semibold text-sm
-                       hover:bg-gray-800 transition-all active:scale-[0.98] shadow-lg"
+                       hover:bg-gray-800 transition-all active:scale-[0.98] shadow-lg
+                       disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none"
           >
             Create Tournament
           </button>
+          {!can_create && (
+            <div className="text-xs text-gray-400 text-center mt-2">
+              {!name.trim() ? 'Enter a tournament name' : 'Add at least one category'}
+            </div>
+          )}
         </div>
       </div>
 
@@ -196,9 +215,6 @@ export default function TournamentSetup() {
                       <div>
                         <div className="font-semibold text-gray-900">{t.name}</div>
                         <div className="flex gap-2 mt-1.5">
-                          <span className="px-2.5 py-1 rounded-lg bg-gray-100 text-gray-600 text-xs font-semibold capitalize">
-                            {t.pairing_constraint.replace('_', ' ')}
-                          </span>
                           <span className="px-2.5 py-1 rounded-lg bg-orange-50 text-orange-700 text-xs font-semibold font-score">
                             ⏱ {format_time(t.default_duration ?? DEFAULT_DURATION)}
                           </span>
@@ -210,6 +226,9 @@ export default function TournamentSetup() {
                           </span>
                           <span className="px-2.5 py-1 rounded-lg bg-kumite-blue-50 text-kumite-blue-700 text-xs font-semibold">
                             {comp_count} competitors
+                          </span>
+                          <span className="px-2.5 py-1 rounded-lg bg-yellow-50 text-yellow-700 text-xs font-semibold">
+                            {(t.third_place_mode ?? DEFAULT_THIRD_PLACE_MODE) === 'dual' ? '2 bronze' : '1 bronze'}
                           </span>
                           {t.categories && t.categories.length > 0 && (
                             <span className="px-2.5 py-1 rounded-lg bg-purple-50 text-purple-700 text-xs font-semibold">
@@ -278,6 +297,31 @@ export default function TournamentSetup() {
                         </div>
 
                         <label className="block text-xs font-semibold text-purple-600 uppercase tracking-wider mb-2">
+                          Third Place
+                        </label>
+                        <div className="flex gap-2 mb-1.5">
+                          {THIRD_PLACE_OPTIONS.map(opt => {
+                            const current = (t.third_place_mode ?? DEFAULT_THIRD_PLACE_MODE) === opt.value;
+                            return (
+                              <button
+                                key={opt.value}
+                                onClick={() => update_tournament({ ...t, third_place_mode: opt.value })}
+                                className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-all border-2
+                                  ${current
+                                    ? 'border-gray-900 bg-gray-900 text-white shadow-sm'
+                                    : 'border-gray-100 text-gray-600 hover:border-gray-300'}`}
+                              >
+                                {opt.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="text-xs text-gray-400 mb-4">
+                          Changing this only affects brackets generated from now on. Re-generate an
+                          existing bracket to apply it.
+                        </div>
+
+                        <label className="block text-xs font-semibold text-purple-600 uppercase tracking-wider mb-2">
                           Manage Categories
                         </label>
                         <div className="flex gap-2 mb-2">
@@ -298,15 +342,21 @@ export default function TournamentSetup() {
                         </div>
                         {t.categories && t.categories.length > 0 ? (
                           <div className="flex flex-wrap gap-2">
-                            {t.categories.map(cat => (
-                              <span key={cat.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-100 text-purple-700 text-xs font-semibold">
-                                {cat.name}
-                                <button
-                                  onClick={() => handle_remove_edit_category(t.id, cat.id)}
-                                  className="text-purple-400 hover:text-kumite-red-500 transition-colors text-sm leading-none"
-                                >&times;</button>
-                              </span>
-                            ))}
+                            {t.categories.map(cat => {
+                              const is_last = (t.categories || []).length === 1;
+                              return (
+                                <span key={cat.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-100 text-purple-700 text-xs font-semibold">
+                                  {cat.name}
+                                  <button
+                                    onClick={() => handle_remove_edit_category(t.id, cat.id)}
+                                    disabled={is_last}
+                                    title={is_last ? 'A tournament needs at least one category' : 'Remove category'}
+                                    className="text-purple-400 hover:text-kumite-red-500 transition-colors text-sm leading-none
+                                               disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-purple-400"
+                                  >&times;</button>
+                                </span>
+                              );
+                            })}
                           </div>
                         ) : (
                           <div className="text-xs text-gray-400 italic">No categories yet. Add one above.</div>

@@ -2,6 +2,7 @@ import { jsPDF } from 'jspdf';
 import { Tournament } from '../types/tournament';
 import { Match } from '../types/match';
 import { Competitor } from '../types/competitor';
+import { get_standings, get_semifinal_losers } from './bracket_generator';
 
 function get_name(id: string, competitors: Competitor[]): string {
   if (id === 'BYE') return 'BYE';
@@ -60,7 +61,6 @@ export function build_bracket_pdf(
 
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Pairing: ${tournament.pairing_constraint.replace('_', ' ')}`, 14, category_name ? 28 : 22);
   doc.text(new Date().toLocaleDateString(), page_w - 40, 15);
 
   // Layout geometry
@@ -71,7 +71,10 @@ export function build_bracket_pdf(
   const left_margin = 14;
   const start_y = 35;
   const available_h = page_h - start_y - 25;
-  const reserved_third = third_place ? 64 : 0;
+  // Both bronze formats occupy the same corner, so reserve the column either
+  // way — only a two-competitor draw (a single final) has no bronze at all.
+  const has_bronze_panel = !third_place && total_rounds > 1;
+  const reserved_third = (third_place || has_bronze_panel) ? 64 : 0;
   const col_width = (page_w - left_margin * 2 - reserved_third) / Math.max(total_rounds, 1);
   const box_w = col_width - 10;           // leave a 10mm gap for connector lines
   const connector_gap = col_width - box_w; // horizontal room between columns
@@ -189,6 +192,25 @@ export function build_bracket_pdf(
 
     draw_competitor_row(x, y, tp_box_w, third_place.winner_id === third_place.blue_competitor_id, true, third_place.blue_competitor_id);
     draw_competitor_row(x, y + row_h, tp_box_w, third_place.winner_id === third_place.red_competitor_id, false, third_place.red_competitor_id);
+  } else {
+    // Two bronze medals: no play-off to draw, so list the beaten semi-finalists.
+    const bronze = get_semifinal_losers(matches);
+    if (bronze.length > 0) {
+      const x = page_w - reserved_third - 2;
+      const bx_w = reserved_third - 6;
+      let y = page_h - 40;
+
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(180, 140, 0);
+      doc.text('3RD PLACE (x2)', x, y - 3);
+      doc.setTextColor(0, 0, 0);
+
+      for (const id of bronze) {
+        draw_competitor_row(x, y, bx_w, true, true, id);
+        y += row_h;
+      }
+    }
   }
 
   // Footer
@@ -232,25 +254,28 @@ export function build_results_pdf(
   // Determine placements
   const positive_matches = matches.filter(m => m.bracket_round > 0);
   const total_rounds = Math.max(...positive_matches.map(m => m.bracket_round), 0);
-  const final_match = positive_matches.find(m => m.bracket_round === total_rounds);
   const third_place_match = matches.find(m => m.bracket_round === -1);
 
   const placements: { place: string; competitor_id: string; color: [number, number, number] }[] = [];
+  const standings = get_standings(matches);
 
-  if (final_match?.winner_id) {
-    placements.push({ place: '1st Place', competitor_id: final_match.winner_id, color: [255, 215, 0] });
-    const runner_up = final_match.blue_competitor_id === final_match.winner_id
-      ? final_match.red_competitor_id : final_match.blue_competitor_id;
-    placements.push({ place: '2nd Place', competitor_id: runner_up, color: [192, 192, 192] });
+  const GOLD: [number, number, number] = [255, 215, 0];
+  const SILVER: [number, number, number] = [192, 192, 192];
+  const BRONZE: [number, number, number] = [205, 127, 50];
+  const FOURTH: [number, number, number] = [180, 180, 180];
+
+  if (standings.first) {
+    placements.push({ place: '1st Place', competitor_id: standings.first, color: GOLD });
   }
-
-  if (third_place_match?.winner_id) {
-    placements.push({ place: '3rd Place', competitor_id: third_place_match.winner_id, color: [205, 127, 50] });
-    const fourth = third_place_match.blue_competitor_id === third_place_match.winner_id
-      ? third_place_match.red_competitor_id : third_place_match.blue_competitor_id;
-    if (fourth && fourth !== 'TBD') {
-      placements.push({ place: '4th Place', competitor_id: fourth, color: [180, 180, 180] });
-    }
+  if (standings.second) {
+    placements.push({ place: '2nd Place', competitor_id: standings.second, color: SILVER });
+  }
+  // In `dual` mode both beaten semi-finalists share 3rd and there is no 4th.
+  for (const id of standings.third) {
+    placements.push({ place: '3rd Place', competitor_id: id, color: BRONZE });
+  }
+  if (standings.fourth) {
+    placements.push({ place: '4th Place', competitor_id: standings.fourth, color: FOURTH });
   }
 
   // Podium

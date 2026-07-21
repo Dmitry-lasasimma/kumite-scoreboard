@@ -1,12 +1,12 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { Competitor } from '../../types/competitor';
 import { Tournament } from '../../types/tournament';
 import { Match } from '../../types/match';
-import { MatchScore, PenaltyLevel, Side, ScoreType } from '../../types/score';
-import { add_score, remove_score, calculate_total, check_auto_win, determine_winner, apply_penalty_zenshu, toggle_senshu, award_disqualification } from '../../services/scorer_service';
-import { DEFAULT_DURATION, DISQUALIFYING_PENALTIES } from '../../utils/constants';
+import { MatchScore, PenaltyLevel, Side, ScoreType, MatchStatus, WinReason, OperatorNotification, ClockAnchor } from '../../types/score';
+import { add_score, remove_score, calculate_total, check_auto_win, determine_winner, toggle_senshu, award_disqualification, resolve_outcome, add_flag, remove_flag, clear_flags, penalty_threatens_senshu, is_first_score_of_match } from '../../services/scorer_service';
+import { DEFAULT_DURATION, DISQUALIFYING_PENALTIES, NOTIFICATION_AUTO_DISMISS_MS, TIMER_CRITICAL_SECONDS, CLOCK_TICK_MS } from '../../utils/constants';
 import { play_short_beep, play_long_beep } from '../../utils/sounds';
-import { generate_bracket, advance_winner, reset_match_score, reset_bracket_scores, normalize_brackets } from '../../services/bracket_generator';
+import { generate_bracket, advance_winner, reset_match_score, reset_bracket_scores, normalize_brackets, migrate_to_categories } from '../../services/bracket_generator';
 import { v4 as uuid } from 'uuid';
 
 export type Page = 'home' | 'tournament_setup' | 'competitors' | 'bracket' | 'bracket_detail' | 'scoring' | 'quick_match' | 'about';
@@ -20,6 +20,7 @@ function create_empty_score(): MatchScore {
     blue_ippon: 0, blue_waza_ari: 0, blue_yuko: 0,
     red_ippon: 0, red_waza_ari: 0, red_yuko: 0,
     blue_zenshu: false, red_zenshu: false,
+    blue_flags: 0, red_flags: 0,
   };
 }
 
@@ -35,8 +36,12 @@ interface SpectatorData {
   blue_total: number;
   red_total: number;
   is_running: boolean;
-  match_status: 'idle' | 'active' | 'finished';
+  /** The running clock, or null when stopped. Lets the display compute the
+   *  exact remaining time itself rather than reading a sampled value. */
+  clock_anchor: ClockAnchor | null;
+  match_status: MatchStatus;
   winner: Side | null;
+  win_reason: WinReason;
 }
 
 interface AppState {
@@ -54,6 +59,12 @@ interface AppState {
 
   competitors: Competitor[];
   add_competitor: (c: Competitor) => void;
+  /** Bulk entry from a spreadsheet import — see import_competitors. */
+  import_competitors: (
+    tournament_id: string,
+    new_competitors: Competitor[],
+    existing_ids: string[],
+  ) => void;
   update_competitor: (c: Competitor) => void;
   delete_competitor: (id: string) => void;
 
@@ -62,7 +73,6 @@ interface AppState {
   remove_competitor_from_tournament: (tournament_id: string, competitor_id: string) => void;
 
   matches: Match[];
-  generate_tournament_bracket: (tournament_id: string) => void;
   generate_category_bracket: (tournament_id: string, category_id: string) => void;
   reset_single_match: (match_id: string) => void;
   reset_bracket: (tournament_id: string | null, category_id: string | null) => void;
@@ -77,17 +87,28 @@ interface AppState {
 
   score: MatchScore;
   is_running: boolean;
-  match_status: 'idle' | 'active' | 'finished';
+  clock_anchor: ClockAnchor | null;
+  match_status: MatchStatus;
   winner: Side | null;
+  win_reason: WinReason;
   blue_penalties: PenaltyLevel[];
   red_penalties: PenaltyLevel[];
   score_flash: Side | null;
+  /** Scoring input is locked while the clock runs, to prevent stray taps. */
+  scoring_locked: boolean;
+  /** Senshu reminders shown to the operator on the scoring screen. */
+  notifications: OperatorNotification[];
+  dismiss_notification: (id: string) => void;
 
   handle_score: (side: Side, type: ScoreType) => void;
   handle_remove_score: (side: Side, type: ScoreType) => void;
   handle_toggle_senshu: (side: Side) => void;
   handle_add_penalty: (side: Side, level: PenaltyLevel) => void;
   handle_remove_penalty: (side: Side) => void;
+  handle_add_flag: (side: Side) => void;
+  handle_remove_flag: (side: Side) => void;
+  handle_clear_flags: () => void;
+  handle_confirm_hantei: () => void;
   handle_hajime: () => void;
   handle_stop: () => void;
   handle_resume: () => void;
@@ -108,6 +129,21 @@ export function useAppContext(): AppState {
   return ctx;
 }
 
+// One long-lived channel. Opening and closing a BroadcastChannel per message
+// costs a handle each time and can discard the message that was just posted —
+// which matters now the clock publishes many times a second.
+let spectator_channel: BroadcastChannel | null = null;
+
+function get_spectator_channel(): BroadcastChannel | null {
+  if (spectator_channel) return spectator_channel;
+  try {
+    spectator_channel = new BroadcastChannel('kumite-scoreboard');
+  } catch {
+    spectator_channel = null;
+  }
+  return spectator_channel;
+}
+
 function broadcast_to_spectator(data: SpectatorData) {
   try {
     const kumite = (window as any).kumiteAPI;
@@ -117,9 +153,7 @@ function broadcast_to_spectator(data: SpectatorData) {
   } catch {}
 
   try {
-    const bc = new BroadcastChannel('kumite-scoreboard');
-    bc.postMessage({ type: 'spectator-update', data });
-    bc.close();
+    get_spectator_channel()?.postMessage({ type: 'spectator-update', data });
   } catch {}
 }
 
@@ -134,24 +168,44 @@ function save_stored(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
 }
 
+/**
+ * Read everything back from storage and bring it up to the current data rules
+ * in one pass, so the collections stay consistent with each other.
+ */
+function load_initial_data() {
+  return migrate_to_categories({
+    tournaments: load_stored<Tournament[]>('kumite_tournaments', []),
+    competitors: load_stored<Competitor[]>('kumite_competitors', []),
+    tournament_competitors: load_stored<Record<string, string[]>>('kumite_tc', {}),
+    matches: normalize_brackets(load_stored<Match[]>('kumite_matches', [])),
+  });
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
+  const initial = useMemo(load_initial_data, []);
   const [page, set_page] = useState<Page>('home');
-  const [tournaments, set_tournaments] = useState<Tournament[]>(() => load_stored('kumite_tournaments', []));
-  const [competitors, set_competitors] = useState<Competitor[]>(() => load_stored('kumite_competitors', []));
-  const [tournament_competitors, set_tc] = useState<Record<string, string[]>>(() => load_stored('kumite_tc', {}));
-  const [matches, set_matches] = useState<Match[]>(() => normalize_brackets(load_stored('kumite_matches', [])));
+  const [tournaments, set_tournaments] = useState<Tournament[]>(initial.tournaments);
+  const [competitors, set_competitors] = useState<Competitor[]>(initial.competitors);
+  const [tournament_competitors, set_tc] = useState<Record<string, string[]>>(initial.tournament_competitors);
+  const [matches, set_matches] = useState<Match[]>(initial.matches);
   const [selected_tournament_id, set_selected_tournament_id] = useState<string | null>(null);
   const [selected_category_id, set_selected_category_id] = useState<string | null>(null);
 
   const [current_match, set_current_match] = useState<Match | null>(null);
   const [score, set_score] = useState<MatchScore>(create_empty_score);
   const [is_running, set_is_running] = useState(false);
-  const [match_status, set_match_status] = useState<'idle' | 'active' | 'finished'>('idle');
+  const [clock_anchor, set_clock_anchor] = useState<ClockAnchor | null>(null);
+  const [match_status, set_match_status] = useState<MatchStatus>('idle');
   const [winner, set_winner] = useState<Side | null>(null);
+  const [win_reason, set_win_reason] = useState<WinReason>('none');
   const [blue_penalties, set_blue_penalties] = useState<PenaltyLevel[]>([]);
   const [red_penalties, set_red_penalties] = useState<PenaltyLevel[]>([]);
   const [score_flash, set_score_flash] = useState<Side | null>(null);
+  const [notifications, set_notifications] = useState<OperatorNotification[]>([]);
   const timer_ref = useRef<ReturnType<typeof setInterval> | null>(null);
+  const notification_timeout_ref = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const notifications_ref = useRef<OperatorNotification[]>([]);
+  const time_ref = useRef<number>(DEFAULT_DURATION);
 
   // Persist to localStorage on change
   useEffect(() => { save_stored('kumite_tournaments', tournaments); }, [tournaments]);
@@ -211,32 +265,58 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       blue_total: calculate_total(score, 'blue'),
       red_total: calculate_total(score, 'red'),
       is_running,
+      clock_anchor,
       match_status,
       winner,
+      win_reason,
     });
-  }, [score, blue_penalties, red_penalties, is_running, match_status, winner,
+  }, [score, blue_penalties, red_penalties, is_running, clock_anchor, match_status, winner, win_reason,
       get_blue_name, get_red_name, get_blue_club, get_red_club, get_category_label]);
 
+  // Mirror of the clock so the countdown can read the remaining time on resume
+  // without re-subscribing every tick.
+  useEffect(() => { time_ref.current = score.time_remaining; }, [score.time_remaining]);
+
+  /**
+   * Match clock. The remaining time is derived from the wall clock rather than
+   * counted down a second at a time, so it carries sub-second precision and
+   * cannot drift over a three-minute round. Pausing therefore captures the true
+   * fractional remainder (12.47s, not 12s), which is what the spectator display
+   * shows in the closing seconds.
+   */
   useEffect(() => {
-    if (is_running && score.time_remaining > 0) {
-      timer_ref.current = setInterval(() => {
-        set_score(prev => {
-          const next = { ...prev, time_remaining: prev.time_remaining - 1 };
-          if (next.time_remaining === 15) {
-            play_short_beep();
-          }
-          if (next.time_remaining <= 0) {
-            // Time is up: stop the clock and sound the long time-up horn
-            // automatically, but keep the match ACTIVE. The referee must still
-            // officially end the match (or add extra time and resume) before a
-            // winner is declared. See handle_end_match.
-            set_is_running(false);
-            play_long_beep();
-          }
-          return next;
-        });
-      }, 1000);
-    }
+    if (!is_running) { set_clock_anchor(null); return; }
+    const started_from = time_ref.current;
+    if (started_from <= 0) { set_clock_anchor(null); return; }
+    const started_at = Date.now();
+    let warned = started_from <= TIMER_CRITICAL_SECONDS;
+    let expired = false;
+
+    // Publish where the clock started rather than only what it currently reads,
+    // so every window can derive the exact remaining time for itself.
+    set_clock_anchor({ from: started_from, at: started_at });
+
+    timer_ref.current = setInterval(() => {
+      const elapsed = (Date.now() - started_at) / 1000;
+      const remaining = Math.max(0, started_from - elapsed);
+
+      if (!warned && remaining <= TIMER_CRITICAL_SECONDS) {
+        warned = true;
+        play_short_beep();
+      }
+      set_score(prev => ({ ...prev, time_remaining: remaining }));
+
+      if (remaining <= 0 && !expired) {
+        expired = true;
+        // Time is up: stop the clock and sound the long time-up horn
+        // automatically, but keep the match ACTIVE. The referee must still
+        // officially end the match (or add extra time and resume) before a
+        // winner is declared. See handle_end_match.
+        set_is_running(false);
+        play_long_beep();
+      }
+    }, CLOCK_TICK_MS);
+
     return () => { if (timer_ref.current) clearInterval(timer_ref.current); };
   }, [is_running]);
 
@@ -258,6 +338,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const add_competitor = useCallback((c: Competitor) => {
     set_competitors(prev => [...prev, c]);
+  }, []);
+
+  /**
+   * Apply a reviewed spreadsheet import in one step: create the new
+   * competitors and enter both them and the already-registered ones into the
+   * tournament. Existing competitors are never modified, so someone already
+   * drawn into another tournament keeps their category there.
+   */
+  const import_competitors = useCallback((
+    tournament_id: string,
+    new_competitors: Competitor[],
+    existing_ids: string[],
+  ) => {
+    if (new_competitors.length > 0) {
+      set_competitors(prev => [...prev, ...new_competitors]);
+    }
+    const all_ids = [...new_competitors.map(c => c.id), ...existing_ids];
+    if (all_ids.length === 0) return;
+    set_tc(prev => {
+      const current = prev[tournament_id] || [];
+      const merged = [...current];
+      for (const id of all_ids) if (!merged.includes(id)) merged.push(id);
+      return { ...prev, [tournament_id]: merged };
+    });
   }, []);
 
   const update_competitor = useCallback((c: Competitor) => {
@@ -287,19 +391,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     set_tc(prev => ({ ...prev, [tid]: (prev[tid] || []).filter(id => id !== cid) }));
   }, []);
 
-  const generate_tournament_bracket = useCallback((tid: string) => {
-    const t = tournaments.find(x => x.id === tid);
-    if (!t) return;
-    const comp_ids = tournament_competitors[tid] || [];
-    const comps = comp_ids.map(id => competitors.find(c => c.id === id)).filter(Boolean) as Competitor[];
-    if (comps.length < 2) return;
-
-    set_matches(prev => prev.filter(m => m.tournament_id !== tid));
-    const bracket = generate_bracket(comps, tid, t.pairing_constraint, null);
-    set_matches(prev => [...prev, ...bracket]);
-    set_tournaments(prev => prev.map(x => x.id === tid ? { ...x, status: 'in_progress' as const } : x));
-  }, [tournaments, tournament_competitors, competitors]);
-
+  /**
+   * Draw a bracket for one category. Categories are the pairing rule, so this
+   * is the only way a bracket is created.
+   */
   const generate_category_bracket = useCallback((tid: string, category_id: string) => {
     const t = tournaments.find(x => x.id === tid);
     if (!t) return;
@@ -311,7 +406,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (comps.length < 2) return;
 
     set_matches(prev => prev.filter(m => !(m.tournament_id === tid && m.category_id === category_id)));
-    const bracket = generate_bracket(comps, tid, t.pairing_constraint, category_id);
+    const bracket = generate_bracket(comps, tid, category_id, t.third_place_mode);
     set_matches(prev => [...prev, ...bracket]);
     set_tournaments(prev => prev.map(x => x.id === tid ? { ...x, status: 'in_progress' as const } : x));
   }, [tournaments, tournament_competitors, competitors]);
@@ -421,8 +516,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     set_is_running(false);
     set_match_status('idle');
     set_winner(null);
+    set_win_reason('none');
     set_blue_penalties([]);
     set_red_penalties([]);
+    set_notifications([]);
     // Keep the bracket selection in sync so "View Bracket" returns to this bracket.
     set_selected_tournament_id(match.tournament_id);
     set_selected_category_id(match.category_id);
@@ -447,13 +544,90 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     set_is_running(false);
     set_match_status('idle');
     set_winner(null);
+    set_win_reason('none');
     set_blue_penalties([]);
     set_red_penalties([]);
+    set_notifications([]);
     set_page('scoring');
   }, []);
 
+  // Scores and penalties may only be entered while the clock is stopped. The
+  // referee always calls YAME before awarding anything, so this guards against
+  // stray taps registering during live action.
+  const scoring_locked = is_running;
+
+  /* ── Operator reminders ── */
+
+  const push_notification = useCallback((n: Omit<OperatorNotification, 'id'>) => {
+    // Only one reminder of each kind is useful at a time — the newest wins.
+    set_notifications(prev => [...prev.filter(x => x.kind !== n.kind), { ...n, id: uuid() }]);
+  }, []);
+
+  const dismiss_notification = useCallback((id: string) => {
+    set_notifications(prev => prev.filter(n => n.id !== id));
+  }, []);
+
+  const side_name = useCallback((side: Side) => (
+    side === 'blue' ? get_blue_name() : get_red_name()
+  ), [get_blue_name, get_red_name]);
+
+  // A reminder disappears the moment the operator resolves it: awarding Senshu
+  // to either side settles the "award" reminder, and taking Senshu off the
+  // penalised competitor settles the "revoke" one.
+  useEffect(() => {
+    set_notifications(prev => {
+      const next = prev.filter(n => {
+        if (n.kind === 'senshu_award') return !score.blue_zenshu && !score.red_zenshu;
+        if (n.kind === 'senshu_revoke') return n.side === 'blue' ? score.blue_zenshu : score.red_zenshu;
+        return true;
+      });
+      return next.length === prev.length ? prev : next;
+    });
+  }, [score.blue_zenshu, score.red_zenshu]);
+
+  // Keep a live handle on the reminders without making the auto-dismiss effect
+  // depend on them — the countdown must start on TSUZUKETE, not on every change.
+  useEffect(() => { notifications_ref.current = notifications; }, [notifications]);
+
+  /**
+   * Auto-dismiss runs only while the match is actually being fought: the clock
+   * starting (HAJIME / TSUZUKETE) begins the countdown, and only the reminders
+   * that were on screen at that moment are cleared. Stopping the clock cancels
+   * the countdown, so a reminder raised during a stoppage always gets its full
+   * time and is never killed by a timer left over from an earlier round.
+   */
+  useEffect(() => {
+    if (notification_timeout_ref.current) {
+      clearTimeout(notification_timeout_ref.current);
+      notification_timeout_ref.current = null;
+    }
+    if (!is_running) return;
+    const pending_ids = notifications_ref.current.map(n => n.id);
+    if (pending_ids.length === 0) return;
+    notification_timeout_ref.current = setTimeout(() => {
+      set_notifications(prev => prev.filter(n => !pending_ids.includes(n.id)));
+      notification_timeout_ref.current = null;
+    }, NOTIFICATION_AUTO_DISMISS_MS);
+  }, [is_running]);
+
+  useEffect(() => () => {
+    if (notification_timeout_ref.current) clearTimeout(notification_timeout_ref.current);
+  }, []);
+
   const handle_score = useCallback((side: Side, type: ScoreType) => {
-    if (match_status === 'finished') return;
+    if (match_status === 'finished' || match_status === 'hantei') return;
+    if (is_running) return;
+
+    // First point of the match: remind the operator that Senshu may be due.
+    if (is_first_score_of_match(score)) {
+      push_notification({
+        kind: 'senshu_award',
+        side,
+        title: `Senshu — ${side_name(side)}?`,
+        message: 'First point of the match. Award Senshu if the point was unopposed, using the Senshu badge above the score.',
+      });
+    }
+
     set_score(prev => {
       const updated = add_score(prev, side, type);
       const prev_auto = check_auto_win(prev);
@@ -469,20 +643,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
     set_score_flash(side);
     setTimeout(() => set_score_flash(null), 400);
-  }, [match_status]);
+  }, [match_status, is_running, score, push_notification, side_name]);
 
   const handle_remove_score = useCallback((side: Side, type: ScoreType) => {
-    if (match_status === 'finished') return;
+    if (match_status === 'finished' || match_status === 'hantei') return;
+    if (is_running) return;
     set_score(prev => remove_score(prev, side, type));
-  }, [match_status]);
+  }, [match_status, is_running]);
 
   const handle_toggle_senshu = useCallback((side: Side) => {
-    if (match_status === 'finished') return;
+    if (match_status === 'finished' || match_status === 'hantei') return;
+    if (is_running) return;
     set_score(prev => toggle_senshu(prev, side));
-  }, [match_status]);
+  }, [match_status, is_running]);
 
   const handle_add_penalty = useCallback((side: Side, level: PenaltyLevel) => {
-    if (match_status === 'finished') return;
+    if (match_status === 'finished' || match_status === 'hantei') return;
+    if (is_running) return;
     if (side === 'blue') set_blue_penalties(prev => [...prev, level]);
     else set_red_penalties(prev => [...prev, level]);
 
@@ -494,19 +671,61 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       set_is_running(false);
       set_match_status('finished');
       set_winner(other);
+      set_win_reason('disqualification');
       play_long_beep(); // disqualification ends the match decisively
-    } else {
-      set_score(prev => apply_penalty_zenshu(prev, side, level));
+    } else if (penalty_threatens_senshu(score, side, level)) {
+      // HC against the Senshu holder. Senshu is NOT removed automatically —
+      // the operator is reminded and makes the call.
+      push_notification({
+        kind: 'senshu_revoke',
+        side,
+        title: `Take back Senshu — ${side_name(side)}?`,
+        message: 'HC penalty against the Senshu holder. Tap the Senshu badge to take it back if the referee revoked it.',
+      });
     }
-  }, [match_status]);
+  }, [match_status, is_running, score, push_notification, side_name]);
 
   const handle_remove_penalty = useCallback((side: Side) => {
+    if (match_status === 'finished' || match_status === 'hantei') return;
+    if (is_running) return;
     if (side === 'blue') set_blue_penalties(prev => prev.slice(0, -1));
     else set_red_penalties(prev => prev.slice(0, -1));
-  }, []);
+  }, [match_status, is_running]);
+
+  /* ── Hantei (judges' flags) ── */
+
+  const handle_add_flag = useCallback((side: Side) => {
+    if (match_status !== 'hantei') return;
+    set_score(prev => add_flag(prev, side));
+  }, [match_status]);
+
+  const handle_remove_flag = useCallback((side: Side) => {
+    if (match_status !== 'hantei') return;
+    set_score(prev => remove_flag(prev, side));
+  }, [match_status]);
+
+  const handle_clear_flags = useCallback(() => {
+    if (match_status !== 'hantei') return;
+    set_score(prev => clear_flags(prev));
+  }, [match_status]);
+
+  /**
+   * Confirm the judges' vote. The flags have already been added to each side's
+   * score, so the normal resolution now produces a winner. A split that is
+   * still level (an even number of flags) leaves the vote open.
+   */
+  const handle_confirm_hantei = useCallback(() => {
+    if (match_status !== 'hantei') return;
+    const outcome = resolve_outcome(score);
+    if (!outcome.winner) return;
+    set_match_status('finished');
+    set_winner(outcome.winner);
+    set_win_reason(outcome.reason);
+    play_long_beep();
+  }, [match_status, score]);
 
   const handle_hajime = useCallback(() => {
-    if (match_status === 'finished') return;
+    if (match_status === 'finished' || match_status === 'hantei') return;
     set_match_status('active');
     set_is_running(true);
   }, [match_status]);
@@ -522,8 +741,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     set_is_running(false);
     set_match_status('idle');
     set_winner(null);
+    set_win_reason('none');
     set_blue_penalties([]);
     set_red_penalties([]);
+    set_notifications([]);
   }, []);
 
   const handle_time_change = useCallback((seconds: number) => {
@@ -531,16 +752,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   /**
-   * Officially end the match on the referee's command. Stops the clock,
-   * determines the winner from the current score (with Senshu as tie-breaker)
-   * and marks the match finished. Used when time is up or the referee declares
-   * a decision.
+   * Officially end the match on the referee's command. Stops the clock and
+   * runs the decision sequence: points → Senshu → most advanced technique.
+   * If none of those separate the competitors the match moves to HANTEI and
+   * waits for the judges' flags instead of finishing.
    */
   const handle_end_match = useCallback((silent?: boolean) => {
     if (match_status !== 'active') return;
     set_is_running(false);
+    const outcome = resolve_outcome(score);
+    if (outcome.needs_hantei) {
+      set_match_status('hantei');
+      set_score(prev => clear_flags(prev));
+      if (!silent) play_long_beep();
+      return;
+    }
     set_match_status('finished');
-    set_winner(determine_winner(score));
+    set_winner(outcome.winner);
+    set_win_reason(outcome.reason);
     // Normal end sounds the long beep; a silent end declares the winner quietly.
     if (!silent) play_long_beep();
   }, [match_status, score]);
@@ -591,16 +820,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     tournaments, add_tournament, update_tournament, delete_tournament,
     selected_tournament_id, set_selected_tournament_id,
     selected_category_id, set_selected_category_id,
-    competitors, add_competitor, update_competitor, delete_competitor,
+    competitors, add_competitor, import_competitors, update_competitor, delete_competitor,
     tournament_competitors, add_competitor_to_tournament, remove_competitor_from_tournament,
-    matches, generate_tournament_bracket, generate_category_bracket,
+    matches, generate_category_bracket,
     reset_single_match, reset_bracket,
     edit_move_slot, edit_assign_slot, edit_set_match_score, edit_set_match_winner,
     current_match, start_match, start_quick_match,
-    score, is_running, match_status, winner,
-    blue_penalties, red_penalties, score_flash,
+    score, is_running, clock_anchor, match_status, winner, win_reason,
+    blue_penalties, red_penalties, score_flash, scoring_locked,
+    notifications, dismiss_notification,
     handle_score, handle_remove_score, handle_toggle_senshu,
     handle_add_penalty, handle_remove_penalty,
+    handle_add_flag, handle_remove_flag, handle_clear_flags, handle_confirm_hantei,
     handle_hajime, handle_stop, handle_resume, handle_reset, handle_end_match,
     handle_time_change, handle_finish_match,
     get_competitor, get_tournament,

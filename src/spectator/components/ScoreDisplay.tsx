@@ -12,46 +12,66 @@ export default function ScoreDisplay({ total, score, side, has_zenshu }: ScoreDi
   const ippon = side === 'blue' ? score.blue_ippon : score.red_ippon;
   const waza = side === 'blue' ? score.blue_waza_ari : score.red_waza_ari;
   const yuko = side === 'blue' ? score.blue_yuko : score.red_yuko;
+  const flags = (side === 'blue' ? score.blue_flags : score.red_flags) || 0;
+
+  const breakdown = [
+    { label: 'Ippon', value: ippon, accent: false },
+    { label: 'Waza-ari', value: waza, accent: false },
+    { label: 'Yuko', value: yuko, accent: false },
+    ...(flags > 0 ? [{ label: 'Flags', value: flags, accent: true }] : []),
+  ];
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center">
-      {/* Score inside a circle. When this side holds Senshu the ring lights up
-          and a "SENSHU" badge sits on the circle. */}
-      <div className="relative flex items-center justify-center">
+    // A compact group: the circle and its breakdown sit directly together and
+    // are positioned by the panel, rather than stretching to fill it — which
+    // would push the breakdown down to the bottom edge.
+    <div className="flex flex-col items-center gap-[2vh] min-h-0 shrink">
+      <div className="w-full flex items-center justify-center min-h-0">
         <div
-          className={`flex items-center justify-center rounded-full transition-all
-            w-[22rem] h-[22rem] max-w-[80%] aspect-square
-            ${has_zenshu
-              ? 'border-[10px] border-yellow-400 shadow-[0_0_60px_rgba(250,204,21,0.55)] bg-white/5'
-              : 'border-[6px] border-white/20 bg-white/5'}`}
+          className="relative flex items-center justify-center min-h-0"
+          style={{ height: 'min(30vh, 21vw)', aspectRatio: '1', maxHeight: '100%' }}
         >
-          <div className="text-[11rem] font-score font-bold text-white leading-none drop-shadow-2xl">
-            {total}
+          <div
+            className={`w-full h-full flex items-center justify-center rounded-full transition-all
+              ${has_zenshu
+                ? 'border-[0.8vh] border-yellow-400 shadow-[0_0_6vh_rgba(250,204,21,0.55)] bg-white/5'
+                : 'border-[0.5vh] border-white/20 bg-white/5'}`}
+            // Container units let the number track the circle exactly, so it
+            // stays proportional at any size.
+            style={{ containerType: 'size' }}
+          >
+            <span className="font-score font-bold text-white leading-none drop-shadow-2xl"
+                  style={{ fontSize: '62cqh' }}>
+              {total}
+            </span>
           </div>
-        </div>
 
-        {has_zenshu && (
-          <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 px-6 py-2 rounded-full
-                          bg-yellow-400 text-gray-900 text-lg font-bold uppercase tracking-widest
-                          shadow-lg whitespace-nowrap">
-            Senshu
-          </div>
-        )}
+          {has_zenshu && (
+            <div className="absolute -bottom-[1.2vh] left-1/2 -translate-x-1/2 px-[1.4vw] py-[0.4vh]
+                            rounded-full bg-yellow-400 text-gray-900 font-bold uppercase
+                            tracking-[0.25em] shadow-lg whitespace-nowrap"
+                 style={{ fontSize: 'min(2vh, 1.5vw)' }}>
+              Senshu
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="flex gap-6 mt-10 text-white/70">
-        <div className="text-center">
-          <div className="text-2xl font-score font-bold text-white">{ippon}</div>
-          <div className="text-xs uppercase tracking-widest">Ippon</div>
-        </div>
-        <div className="text-center">
-          <div className="text-2xl font-score font-bold text-white">{waza}</div>
-          <div className="text-xs uppercase tracking-widest">Waza-ari</div>
-        </div>
-        <div className="text-center">
-          <div className="text-2xl font-score font-bold text-white">{yuko}</div>
-          <div className="text-xs uppercase tracking-widest">Yuko</div>
-        </div>
+      <div className="flex gap-[2.5vw] text-white/70 shrink-0">
+        {breakdown.map(item => (
+          <div key={item.label} className="text-center">
+            <div className={`font-score font-bold leading-none
+              ${item.accent ? 'text-yellow-300' : 'text-white'}`}
+                 style={{ fontSize: 'min(3.6vh, 2.7vw)' }}>
+              {item.value}
+            </div>
+            <div className={`uppercase tracking-[0.2em] mt-[0.4vh]
+              ${item.accent ? 'text-yellow-300/80' : 'text-white/60'}`}
+                 style={{ fontSize: 'min(1.6vh, 1.2vw)' }}>
+              {item.label}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

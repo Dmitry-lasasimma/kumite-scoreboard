@@ -1,13 +1,13 @@
-export type WeightCategory = 'Light' | 'Medium' | 'Heavy';
-export type AgeCategory = 'U12' | 'U16' | 'U21' | 'Senior';
-
 export interface Competitor {
   id: string;
   first_name: string;
   last_name: string;
   club: string;
-  weight_category: WeightCategory | null;
-  age_category: AgeCategory | null;
+  /**
+   * The tournament category this competitor competes in. Categories are defined
+   * per tournament by the operator and are what the draw is built from, so a
+   * competitor without one cannot be placed in a bracket.
+   */
   category_id: string | null;
   created_at?: string;
 }

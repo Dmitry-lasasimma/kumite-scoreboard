@@ -83,7 +83,7 @@ https://developer.apple.com/account → Membership details (a 10-character strin
 | `APPLE_APP_SPECIFIC_PASSWORD` | the app-specific password from step 4            |
 | `APPLE_TEAM_ID`               | your 10-character Team ID from step 5            |
 
-That's it. The next tagged build (`git tag v1.0.3 && git push --tags`) produces a
+That's it. The next tagged build (`git tag v1.0.4 && git push --tags`) produces a
 signed, notarized DMG that opens with no warnings.
 
 ---
