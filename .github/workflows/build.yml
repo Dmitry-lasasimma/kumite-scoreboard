@@ -41,6 +41,12 @@ jobs:
             npx electron-builder --mac --arm64 --publish never -c.mac.notarize=true
           else
             echo "No Apple credentials — building UNSIGNED DMG (users must run xattr, see SIGNING.md)"
+            # When the secrets are absent, GitHub still exports CSC_LINK/CSC_KEY_PASSWORD
+            # as EMPTY strings. electron-builder's macOS signer only skips signing when
+            # CSC_LINK is null (undefined) — an empty value makes it resolve "" to the
+            # project directory and fail with "<projectDir> not a file". Unset them so
+            # the signer sees them as truly absent and skips signing cleanly.
+            unset CSC_LINK CSC_KEY_PASSWORD
             CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --arm64 --publish never
           fi
 
