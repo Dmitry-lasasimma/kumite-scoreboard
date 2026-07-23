@@ -289,7 +289,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const started_from = time_ref.current;
     if (started_from <= 0) { set_clock_anchor(null); return; }
     const started_at = Date.now();
-    let warned = started_from <= TIMER_CRITICAL_SECONDS;
+    let warned = started_from < TIMER_CRITICAL_SECONDS + 1;
     let expired = false;
 
     // Publish where the clock started rather than only what it currently reads,
@@ -300,7 +300,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const elapsed = (Date.now() - started_at) / 1000;
       const remaining = Math.max(0, started_from - elapsed);
 
-      if (!warned && remaining <= TIMER_CRITICAL_SECONDS) {
+      // Fire as soon as the displayed second first reaches the critical mark
+      // (e.g. the instant the clock shows 00:15.99, not a full second later
+      // when it's about to roll over to 00:14).
+      if (!warned && remaining < TIMER_CRITICAL_SECONDS + 1) {
         warned = true;
         play_short_beep();
       }
